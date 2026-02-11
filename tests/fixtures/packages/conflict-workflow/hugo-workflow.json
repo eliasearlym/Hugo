@@ -1,0 +1,5 @@
+{
+  "name": "conflict-workflow",
+  "description": "Test fixture — conflicting agent",
+  "agents": [{ "path": "agents/reviewer.md" }]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "agents-only",
+  "description": "Test fixture — agents only",
+  "agents": [
+    { "path": "agents/planner.md" },
+    { "path": "agents/executor.md" }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "name": "@happily-dev/hugo",
+  "version": "0.0.1",
+  "description": "Context-efficient agentic workflow plugin for OpenCode",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "hugo": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "bun build src/index.ts src/cli.ts --outdir dist --target bun --format esm && tsc --emitDeclarationOnly",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "bun run clean && bun run build",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "context",
+    "planning",
+    "workflow"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.1.19"
+  },
+  "devDependencies": {
+    "bun-types": "1.3.6",
+    "typescript": "^5.7.3"
+  }
+}

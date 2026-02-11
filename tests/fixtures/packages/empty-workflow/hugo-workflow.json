@@ -1,0 +1,7 @@
+{
+  "name": "empty-workflow",
+  "description": "Test fixture — empty workflow",
+  "agents": [],
+  "skills": [],
+  "commands": []
+}
