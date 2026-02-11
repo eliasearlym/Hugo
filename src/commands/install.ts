@@ -26,6 +26,7 @@ export type InstallResult = {
 export async function install(
   opencodeDir: string,
   packageSpec: string,
+  options?: { force?: boolean },
 ): Promise<InstallResult> {
   const { source, warnings: parseWarnings } = parsePackageSpec(packageSpec);
 
@@ -77,6 +78,7 @@ export async function install(
       opencodeDir,
       lock,
       manifest.name,
+      { force: options?.force },
     );
 
     // 8. Create workflow entry

@@ -43,7 +43,7 @@ export async function remove(
       continue;
     }
 
-    // Clean — safe to delete
+    // Clean — delete
     await rm(fullPath);
     removed++;
   }

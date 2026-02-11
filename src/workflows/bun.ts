@@ -2,7 +2,6 @@ import { $ } from "bun";
 import { join } from "node:path";
 import { readFile, writeFile, mkdir, exists } from "node:fs/promises";
 import type { PackageSource } from "./types";
-import { GIT_PREFIXES } from "./constants";
 import { stripVersion } from "./utils";
 
 export async function addDependency(
@@ -48,22 +47,33 @@ export type ParsedPackageSpec = {
   warnings: string[];
 };
 
+/**
+ * Registry package names follow a predictable pattern:
+ *   - "lodash", "lodash@^1.0.0"
+ *   - "@org/pkg", "@org/pkg@^2.0.0"
+ *
+ * Anything that doesn't match this pattern is a git/URL source.
+ * We let bun handle the actual protocol interpretation — Hugo only
+ * needs to know "registry" vs "not registry" to pick the right
+ * package name resolution strategy.
+ */
+const REGISTRY_PATTERN = /^(@[a-z0-9\-~][a-z0-9\-._~]*\/)?[a-z0-9\-~][a-z0-9\-._~]*(@.+)?$/i;
+
 export function parsePackageSpec(spec: string): ParsedPackageSpec {
   // file: protocol — local path install
   if (spec.startsWith("file:")) {
     return { source: { type: "file", path: spec.slice(5) }, warnings: [] };
   }
 
-  for (const prefix of GIT_PREFIXES) {
-    if (spec.startsWith(prefix)) {
-      const { url, ref } = splitRef(spec);
-      return { source: { type: "git", url, ref }, warnings: [] };
-    }
+  // Registry package — matches npm naming convention
+  if (REGISTRY_PATTERN.test(spec)) {
+    return { source: { type: "registry", name: spec }, warnings: [] };
   }
 
   // GitHub shorthand: "org/repo" or "org/repo#tag"
-  // Must have exactly one slash and no @ prefix (to avoid matching scoped npm packages)
-  if (!spec.startsWith("@") && /^[^/]+\/[^/]+$/.test(spec.split("#")[0])) {
+  // Must have exactly one slash, no @ prefix, and no colon (to avoid matching
+  // scoped npm packages and protocol-prefixed specs like "github:org/repo")
+  if (!spec.startsWith("@") && !spec.includes(":") && /^[^/]+\/[^/]+$/.test(spec.split("#")[0])) {
     const { url, ref } = splitRef(spec);
     const org = spec.split("/")[0];
     return {
@@ -74,7 +84,10 @@ export function parsePackageSpec(spec: string): ParsedPackageSpec {
     };
   }
 
-  return { source: { type: "registry", name: spec }, warnings: [] };
+  // Everything else — git URL, https://, github:, git+ssh://, etc.
+  // Bun handles the actual protocol resolution.
+  const { url, ref } = splitRef(spec);
+  return { source: { type: "git", url, ref }, warnings: [] };
 }
 
 export async function getInstalledVersion(

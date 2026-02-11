@@ -1,6 +1,7 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { join } from "node:path";
-import { createTempDir, runCLI, fixtureDir } from "../helpers";
+import { mkdir, writeFile } from "node:fs/promises";
+import { createTempDir, runCLI, fixtureDir, readFileContent, fileExists } from "../helpers";
 import { install } from "../../src/commands/install";
 
 let cleanups: Array<() => Promise<void>> = [];
@@ -54,6 +55,37 @@ describe("CLI argument handling", () => {
     const { stderr, exitCode } = await runCLI(["remove"]);
     expect(exitCode).toBe(1);
     expect(stderr).toContain("missing workflow name");
+  });
+
+  test("hugo install --unknown-flag prints error, exit 1", async () => {
+    const { stderr, stdout, exitCode } = await runCLI(["install", "--foo", "some-pkg"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Unknown option: --foo");
+    expect(stdout).toContain("hugo — workflow manager");
+  });
+
+  test("hugo remove --unknown-flag prints error, exit 1", async () => {
+    const { stderr, exitCode } = await runCLI(["remove", "--bar", "some-workflow"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Unknown option: --bar");
+  });
+
+  test("hugo update --unknown-flag prints error, exit 1", async () => {
+    const { stderr, exitCode } = await runCLI(["update", "--baz"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Unknown option: --baz");
+  });
+
+  test("hugo list --unknown-flag prints error, exit 1", async () => {
+    const { stderr, exitCode } = await runCLI(["list", "--qux"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Unknown option: --qux");
+  });
+
+  test("hugo status --unknown-flag prints error, exit 1", async () => {
+    const { stderr, exitCode } = await runCLI(["status", "--nope"]);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Unknown option: --nope");
   });
 });
 
@@ -159,5 +191,56 @@ describe("CLI exit codes", () => {
     const cwd = await setup();
     const { exitCode } = await runCLI(["remove", "nonexistent"], { cwd });
     expect(exitCode).toBe(1);
+  });
+});
+
+// --- --force flag behavior ---
+
+describe("CLI --force flag", () => {
+  test("install --force overwrites unmanaged file conflict", async () => {
+    const cwd = await setup();
+    const opencodeDir = join(cwd, ".opencode");
+
+    // Pre-create a file that will conflict with the workflow
+    await mkdir(join(opencodeDir, "agents"), { recursive: true });
+    await writeFile(join(opencodeDir, "agents/reviewer.md"), "# Pre-existing file\n");
+
+    const { stdout, exitCode } = await runCLI(
+      ["install", "--force", `file:${fixtureDir("basic-workflow")}`],
+      { cwd },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("basic-workflow");
+
+    // File should be overwritten with workflow content
+    const content = await readFileContent(join(opencodeDir, "agents/reviewer.md"));
+    expect(content).toContain("Code Reviewer");
+  }, 15_000);
+
+  test("install --force overwrites locally modified file on reinstall", async () => {
+    const cwd = await setup();
+    const opencodeDir = join(cwd, ".opencode");
+    const fixture = `file:${fixtureDir("basic-workflow")}`;
+
+    // Install, then modify a file
+    await install(opencodeDir, fixture);
+    await writeFile(join(opencodeDir, "agents/reviewer.md"), "# My edits\n");
+
+    // Reinstall with --force through the CLI
+    const { stdout, exitCode } = await runCLI(["install", "--force", fixture], { cwd });
+
+    expect(exitCode).toBe(0);
+
+    // Modified file should be overwritten
+    const content = await readFileContent(join(opencodeDir, "agents/reviewer.md"));
+    expect(content).toContain("Code Reviewer");
+  }, 15_000);
+
+  test("remove --force is rejected — force not supported on remove", async () => {
+    const { stderr, exitCode } = await runCLI(["remove", "--force", "some-workflow"]);
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("Unknown option: --force");
   });
 });

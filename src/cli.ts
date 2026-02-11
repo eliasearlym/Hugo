@@ -22,16 +22,49 @@ Usage:
   hugo rm <name>               Alias for remove
   hugo status [name]           Show integrity status of installed files
 
+Options:
+  --force                      Overwrite modified/unmanaged files (install only)
+
 Examples:
   hugo i @some-org/code-review-workflow
   hugo i github:org/code-review-workflow
+  hugo i --force github:org/code-review-workflow
   hugo update
   hugo list
   hugo rm code-review
+  hugo rm code-review
 `.trim();
 
+/**
+ * Parse args for a command. Extracts known flags, collects positional args,
+ * and exits with an error for any unrecognized flags.
+ */
+function parseArgs(
+  rawArgs: string[],
+  knownFlags: string[] = [],
+): { flags: Record<string, boolean>; args: string[] } {
+  const flags: Record<string, boolean> = {};
+  const args: string[] = [];
+
+  for (const arg of rawArgs) {
+    if (arg.startsWith("--")) {
+      if (knownFlags.includes(arg)) {
+        flags[arg] = true;
+      } else {
+        console.error(`Unknown option: ${arg}\n`);
+        console.log(HELP);
+        process.exit(1);
+      }
+    } else {
+      args.push(arg);
+    }
+  }
+
+  return { flags, args };
+}
+
 async function main() {
-  const [command, ...args] = process.argv.slice(2);
+  const [command, ...rawArgs] = process.argv.slice(2);
 
   if (!command || command === "--help" || command === "-h") {
     console.log(HELP);
@@ -41,6 +74,8 @@ async function main() {
   switch (command) {
     case "install":
     case "i": {
+      const { flags, args } = parseArgs(rawArgs, ["--force"]);
+      const force = flags["--force"] ?? false;
       const packageSpec = args[0];
       if (!packageSpec) {
         console.error("Error: missing package spec\n");
@@ -49,7 +84,7 @@ async function main() {
       }
 
       try {
-        const result = await install(OPENCODE_DIR, packageSpec);
+        const result = await install(OPENCODE_DIR, packageSpec, { force });
 
         if (result.warnings.length > 0) {
           for (const warning of result.warnings) {
@@ -71,6 +106,7 @@ async function main() {
     }
 
     case "update": {
+      const { args } = parseArgs(rawArgs);
       const target = args[0]; // optional — specific workflow name
       try {
         const result = await update(OPENCODE_DIR, target);
@@ -110,6 +146,7 @@ async function main() {
 
     case "list":
     case "ls": {
+      parseArgs(rawArgs);
       try {
         const result = await list(OPENCODE_DIR);
 
@@ -136,6 +173,7 @@ async function main() {
 
     case "remove":
     case "rm": {
+      const { args } = parseArgs(rawArgs);
       const workflowName = args[0];
       if (!workflowName) {
         console.error("Error: missing workflow name\n");
@@ -167,6 +205,7 @@ async function main() {
     }
 
     case "status": {
+      const { args } = parseArgs(rawArgs);
       const target = args[0];
       try {
         const result = await status(OPENCODE_DIR, target);

@@ -53,6 +53,38 @@ describe("parsePackageSpec", () => {
     expect(result.source.type).toBe("git");
   });
 
+  test('"https://github.com/org/repo" → git source', () => {
+    const result = parsePackageSpec("https://github.com/org/repo");
+    expect(result.source.type).toBe("git");
+    const source = result.source as { type: "git"; url: string; ref?: string };
+    expect(source.url).toBe("https://github.com/org/repo");
+  });
+
+  test('"http://github.com/org/repo" → git source', () => {
+    const result = parsePackageSpec("http://github.com/org/repo");
+    expect(result.source.type).toBe("git");
+  });
+
+  test('"https://github.com/org/repo#v2.0.0" → git source with ref', () => {
+    const result = parsePackageSpec("https://github.com/org/repo#v2.0.0");
+    expect(result.source.type).toBe("git");
+    const source = result.source as { type: "git"; url: string; ref?: string };
+    expect(source.url).toBe("https://github.com/org/repo");
+    expect(source.ref).toBe("v2.0.0");
+  });
+
+  test('"git://github.com/org/repo.git" → git source', () => {
+    const result = parsePackageSpec("git://github.com/org/repo.git");
+    expect(result.source.type).toBe("git");
+  });
+
+  test('"file:../local-pkg" → file source', () => {
+    const result = parsePackageSpec("file:../local-pkg");
+    expect(result.source.type).toBe("file");
+    const source = result.source as { type: "file"; path: string };
+    expect(source.path).toBe("../local-pkg");
+  });
+
   test('"org/repo" → git source with github: prefix and warnings', () => {
     const result = parsePackageSpec("org/repo");
     expect(result.source.type).toBe("git");

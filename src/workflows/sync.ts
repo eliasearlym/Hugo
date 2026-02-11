@@ -68,7 +68,9 @@ export async function syncWorkflow(
   opencodeDir: string,
   state: WorkflowState,
   currentWorkflowName: string,
+  options?: { force?: boolean },
 ): Promise<SyncResult> {
+  const force = options?.force ?? false;
   const manifestPaths = await collectManifestPaths(manifest, packageDir);
   const files: InstalledFile[] = [];
   const warnings: string[] = [];
@@ -83,6 +85,7 @@ export async function syncWorkflow(
         destination,
         state,
         currentWorkflowName,
+        force,
       );
       if (conflict) {
         warnings.push(conflict);
@@ -114,6 +117,7 @@ async function checkConflict(
   destination: string,
   state: WorkflowState,
   currentWorkflowName: string,
+  force: boolean,
 ): Promise<string | null> {
   if (!(await exists(destFullPath))) {
     return null;
@@ -128,6 +132,9 @@ async function checkConflict(
   }
 
   if (!owner) {
+    if (force) {
+      return null; // Force: overwrite unmanaged files
+    }
     return `File "${destination}" already exists and is not managed by Hugo. Skipping.`;
   }
 
@@ -136,6 +143,9 @@ async function checkConflict(
   if (existingFile) {
     const currentHash = await hashFile(destFullPath);
     if (currentHash !== existingFile.hash) {
+      if (force) {
+        return null; // Force: overwrite locally modified files
+      }
       return `File "${destination}" has been locally modified. Skipping.`;
     }
   }

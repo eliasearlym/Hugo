@@ -157,6 +157,45 @@ describe("install", () => {
     expect(content).toBe("# Pre-existing file\n");
   }, 15_000);
 
+  test("install with force — overwrites unmanaged file conflict", async () => {
+    const opencodeDir = await setup();
+
+    // Pre-create a file that will conflict
+    await mkdir(join(opencodeDir, "agents"), { recursive: true });
+    await writeFile(join(opencodeDir, "agents/reviewer.md"), "# Pre-existing file\n");
+
+    const spec = `file:${fixtureDir("basic-workflow")}`;
+    const result = await install(opencodeDir, spec, { force: true });
+
+    // No warnings about unmanaged files
+    expect(result.warnings.some((w) => w.includes("not managed by Hugo"))).toBe(false);
+
+    // File should be overwritten with workflow content
+    const content = await readFileContent(join(opencodeDir, "agents/reviewer.md"));
+    expect(content).toContain("Code Reviewer");
+  }, 15_000);
+
+  test("install with force — overwrites locally modified file on reinstall", async () => {
+    const opencodeDir = await setup();
+    const spec = `file:${fixtureDir("basic-workflow")}`;
+
+    await install(opencodeDir, spec);
+
+    // Modify a file
+    const reviewerPath = join(opencodeDir, "agents/reviewer.md");
+    await writeFile(reviewerPath, "# Modified by user\n");
+
+    // Reinstall with force
+    const result = await install(opencodeDir, spec, { force: true });
+
+    // No warnings about modified files
+    expect(result.warnings.some((w) => w.includes("locally modified"))).toBe(false);
+
+    // File should be overwritten with original content
+    const content = await readFileContent(reviewerPath);
+    expect(content).toContain("Code Reviewer");
+  }, 15_000);
+
   test("install two workflows that conflict — second throws", async () => {
     const opencodeDir = await setup();
 

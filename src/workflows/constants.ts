@@ -3,4 +3,4 @@ export const MANIFEST_FILE = "hugo-workflow.json";
 export const AGENTS_DIR = "agents";
 export const SKILLS_DIR = "skills";
 export const COMMANDS_DIR = "commands";
-export const GIT_PREFIXES = ["github:", "git+ssh://", "git+https://", "git://", "https://", "http://"] as const;
+
