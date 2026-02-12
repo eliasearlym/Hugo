@@ -22,6 +22,7 @@ export type WorkflowListEntry = {
   agents: string[];
   commands: string[];
   skills: string[];
+  mcps: string[];
 };
 
 export type ListResult = {
@@ -56,6 +57,7 @@ export async function list(options: ListOptions): Promise<ListResult> {
           agents: entry.agents,
           commands: entry.commands,
           skills: entry.skills,
+          mcps: entry.mcps,
         },
       ],
     };
@@ -77,6 +79,7 @@ export async function list(options: ListOptions): Promise<ListResult> {
       agents: entry.agents,
       commands: entry.commands,
       skills: entry.skills,
+      mcps: entry.mcps,
     })),
   };
 }

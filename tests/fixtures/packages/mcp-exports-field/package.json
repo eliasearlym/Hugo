@@ -1,0 +1,12 @@
+{
+  "name": "mcp-exports-field",
+  "version": "1.0.0",
+  "description": "Test fixture — plugin with exports field in package.json",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  }
+}

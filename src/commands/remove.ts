@@ -23,6 +23,7 @@ export type RemoveResult = {
   agents: string[];
   commands: string[];
   skills: string[];
+  mcps: string[];
   bunWarning?: string;
 };
 
@@ -54,6 +55,7 @@ export async function remove(options: RemoveOptions): Promise<RemoveResult> {
     agents: entry.agents,
     commands: entry.commands,
     skills: entry.skills,
+    mcps: entry.mcps,
     bunWarning: warning,
   };
 }

@@ -38,6 +38,7 @@ const sampleEntry: WorkflowEntry = {
   agents: ["reviewer"],
   commands: ["review"],
   skills: ["analysis"],
+  mcps: [],
 };
 
 // ---------------------------------------------------------------------------

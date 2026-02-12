@@ -23,6 +23,7 @@ export type WorkflowManifest = {
   agents: string[];
   commands: string[];
   skills: string[];
+  mcps: string[];
 };
 
 /**
@@ -35,6 +36,7 @@ export type WorkflowEntry = {
   agents: string[];
   commands: string[];
   skills: string[];
+  mcps: string[];
 };
 
 /**

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { stat } from "node:fs/promises";
 
 /**
  * Type guard for Node.js system errors (errors with an `errno` `code` property).
@@ -35,6 +36,19 @@ export function stripVersion(name: string): string {
   }
   const atIndex = name.indexOf("@");
   return atIndex === -1 ? name : name.slice(0, atIndex);
+}
+
+/**
+ * Check if a file exists at the given path.
+ * Stat-based — returns false on any error (not found, permission, etc.).
+ */
+export async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

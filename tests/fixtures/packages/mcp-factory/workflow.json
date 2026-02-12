@@ -1,0 +1,6 @@
+{
+  "agents": ["helper"],
+  "commands": [],
+  "skills": [],
+  "mcps": ["context7", "websearch"]
+}

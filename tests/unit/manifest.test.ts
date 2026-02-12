@@ -18,12 +18,30 @@ describe("parseManifest", () => {
       agents: ["reviewer", "linter"],
       commands: ["review"],
       skills: ["analysis"],
+      mcps: [],
+    });
+  });
+
+  test("parses manifest with mcps", () => {
+    const result = parseManifest(
+      JSON.stringify({
+        agents: ["reviewer"],
+        commands: ["review"],
+        skills: [],
+        mcps: ["context7", "websearch"],
+      }),
+    );
+    expect(result).toEqual({
+      agents: ["reviewer"],
+      commands: ["review"],
+      skills: [],
+      mcps: ["context7", "websearch"],
     });
   });
 
   test("defaults missing arrays to []", () => {
     const result = parseManifest("{}");
-    expect(result).toEqual({ agents: [], commands: [], skills: [] });
+    expect(result).toEqual({ agents: [], commands: [], skills: [], mcps: [] });
   });
 
   test("handles partial manifest (agents only)", () => {
@@ -32,21 +50,22 @@ describe("parseManifest", () => {
       agents: ["reviewer"],
       commands: [],
       skills: [],
+      mcps: [],
     });
   });
 
   test("handles null fields as missing", () => {
     const result = parseManifest(
-      JSON.stringify({ agents: null, commands: null, skills: null }),
+      JSON.stringify({ agents: null, commands: null, skills: null, mcps: null }),
     );
-    expect(result).toEqual({ agents: [], commands: [], skills: [] });
+    expect(result).toEqual({ agents: [], commands: [], skills: [], mcps: [] });
   });
 
   test("handles empty arrays", () => {
     const result = parseManifest(
-      JSON.stringify({ agents: [], commands: [], skills: [] }),
+      JSON.stringify({ agents: [], commands: [], skills: [], mcps: [] }),
     );
-    expect(result).toEqual({ agents: [], commands: [], skills: [] });
+    expect(result).toEqual({ agents: [], commands: [], skills: [], mcps: [] });
   });
 
   // ---------------------------------------------------------------------------

@@ -1,0 +1,5 @@
+{
+  "name": "mcp-runtime",
+  "version": "1.0.0",
+  "description": "Test fixture — plugin that uses runtime APIs during init"
+}

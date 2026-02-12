@@ -1,0 +1,6 @@
+{
+  "agents": ["exporter"],
+  "commands": [],
+  "skills": [],
+  "mcps": ["exports-mcp"]
+}

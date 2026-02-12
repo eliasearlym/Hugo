@@ -35,6 +35,8 @@ export type WorkflowUpdateDetail = {
   removedCommands: string[];
   addedSkills: string[];
   removedSkills: string[];
+  addedMcps: string[];
+  removedMcps: string[];
   warnings: string[];
 };
 
@@ -107,6 +109,7 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
         agents: target.entry.agents,
         commands: target.entry.commands,
         skills: target.entry.skills,
+        mcps: target.entry.mcps,
       };
     }
 
@@ -114,7 +117,8 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
     const manifestChanged =
       !arraysEqual(newManifest.agents, target.entry.agents) ||
       !arraysEqual(newManifest.commands, target.entry.commands) ||
-      !arraysEqual(newManifest.skills, target.entry.skills);
+      !arraysEqual(newManifest.skills, target.entry.skills) ||
+      !arraysEqual(newManifest.mcps, target.entry.mcps);
 
     const updated = versionChanged || manifestChanged;
 
@@ -125,6 +129,7 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
         agents: newManifest.agents,
         commands: newManifest.commands,
         skills: newManifest.skills,
+        mcps: newManifest.mcps,
       });
     }
 
@@ -141,6 +146,8 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
       removedCommands: diff(target.entry.commands, newManifest.commands),
       addedSkills: diff(newManifest.skills, target.entry.skills),
       removedSkills: diff(target.entry.skills, newManifest.skills),
+      addedMcps: diff(newManifest.mcps, target.entry.mcps),
+      removedMcps: diff(target.entry.mcps, newManifest.mcps),
       warnings,
     });
   }

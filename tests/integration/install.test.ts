@@ -26,6 +26,7 @@ describe("install", () => {
     expect(result.agents).toEqual(["reviewer"]);
     expect(result.commands).toEqual(["review"]);
     expect(result.skills).toEqual(["analysis"]);
+    expect(result.mcps).toEqual([]);
 
     // Verify config was written
     const config = await readConfig(projectDir);
@@ -50,6 +51,7 @@ describe("install", () => {
     expect(result.agents).toEqual(["planner", "executor"]);
     expect(result.commands).toEqual([]);
     expect(result.skills).toEqual([]);
+    expect(result.mcps).toEqual([]);
   });
 
   test("errors when workflow already installed", async () => {
@@ -166,6 +168,7 @@ describe("install", () => {
     expect(result.agents).toEqual([]);
     expect(result.commands).toEqual([]);
     expect(result.skills).toEqual([]);
+    expect(result.mcps).toEqual([]);
   });
 
   test("preserves existing config keys", async () => {

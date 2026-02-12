@@ -1,0 +1,6 @@
+{
+  "agents": ["searcher"],
+  "commands": [],
+  "skills": [],
+  "mcps": ["grep-app"]
+}

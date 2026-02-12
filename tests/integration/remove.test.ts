@@ -31,6 +31,7 @@ describe("remove", () => {
     expect(result.agents).toEqual(["reviewer"]);
     expect(result.commands).toEqual(["review"]);
     expect(result.skills).toEqual(["analysis"]);
+    expect(result.mcps).toEqual([]);
 
     // Verify config is clean
     const config = await readConfig(projectDir);

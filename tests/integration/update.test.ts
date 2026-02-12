@@ -99,11 +99,13 @@ describe("update", () => {
       expect(w.addedCommands).toEqual(["lint"]);
       expect(w.removedCommands).toEqual(["review"]);
 
-      // Agents and skills unchanged
+      // Agents, skills, and mcps unchanged
       expect(w.addedAgents).toEqual([]);
       expect(w.removedAgents).toEqual([]);
       expect(w.addedSkills).toEqual([]);
       expect(w.removedSkills).toEqual([]);
+      expect(w.addedMcps).toEqual([]);
+      expect(w.removedMcps).toEqual([]);
       expect(w.warnings).toEqual([]);
     } finally {
       await staged.cleanup();

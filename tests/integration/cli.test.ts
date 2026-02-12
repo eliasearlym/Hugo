@@ -491,6 +491,6 @@ describe("cli: build", () => {
 
     const { stderr, exitCode } = await hugo("build");
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("No agents, commands, or skills found");
+    expect(stderr).toContain("No agents, commands, skills, or MCP servers found");
   });
 });

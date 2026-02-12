@@ -1,0 +1,6 @@
+{
+  "agents": ["researcher"],
+  "commands": [],
+  "skills": [],
+  "mcps": ["exa", "tavily"]
+}

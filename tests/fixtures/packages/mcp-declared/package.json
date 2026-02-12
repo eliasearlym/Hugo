@@ -1,0 +1,8 @@
+{
+  "name": "mcp-declared",
+  "version": "1.0.0",
+  "description": "Test fixture — workflow with MCPs declared in package.json",
+  "hugo": {
+    "mcps": ["tavily", "exa"]
+  }
+}

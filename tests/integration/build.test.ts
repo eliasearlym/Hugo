@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
-import { mkdir, writeFile, readFile } from "node:fs/promises";
-import { createTempDir } from "../helpers";
+import { mkdir, writeFile, readFile, cp } from "node:fs/promises";
+import { createTempDir, fixtureDir } from "../helpers";
 import { build } from "../../src/commands/build";
 
 let projectDir: string;
@@ -168,7 +168,7 @@ describe("build", () => {
     await writePackageJson();
 
     await expect(build({ projectDir })).rejects.toThrow(
-      "No agents, commands, or skills found. Nothing to build.",
+      "No agents, commands, skills, or MCP servers found. Nothing to build.",
     );
   });
 
@@ -179,7 +179,7 @@ describe("build", () => {
     await mkdir(join(projectDir, "skills"), { recursive: true });
 
     await expect(build({ projectDir })).rejects.toThrow(
-      "No agents, commands, or skills found. Nothing to build.",
+      "No agents, commands, skills, or MCP servers found. Nothing to build.",
     );
   });
 
@@ -281,11 +281,90 @@ describe("build", () => {
     expect(raw.endsWith("\n")).toBe(true);
 
     const manifest = JSON.parse(raw);
-    // Should only have agents, commands, skills keys
+    // Should only have agents, commands, skills, mcps keys
     expect(Object.keys(manifest).sort()).toEqual([
       "agents",
       "commands",
+      "mcps",
       "skills",
     ]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // MCP detection
+  // ---------------------------------------------------------------------------
+
+  test("detects MCPs via factory function plugin execution", async () => {
+    await cp(fixtureDir("mcp-factory"), projectDir, { recursive: true });
+
+    const result = await build({ projectDir });
+
+    expect(result.mcps).toEqual(["context7", "websearch"]);
+    expect(result.agents).toEqual(["helper"]);
+
+    const manifest = await readManifest();
+    expect(manifest.mcps).toEqual(["context7", "websearch"]);
+  });
+
+  test("detects MCPs via hooks object export", async () => {
+    await cp(fixtureDir("mcp-hooks-object"), projectDir, { recursive: true });
+
+    const result = await build({ projectDir });
+
+    expect(result.mcps).toEqual(["grep-app"]);
+  });
+
+  test("uses package.json hugo.mcps when declared (skips plugin execution)", async () => {
+    await cp(fixtureDir("mcp-declared"), projectDir, { recursive: true });
+
+    const result = await build({ projectDir });
+
+    expect(result.mcps).toEqual(["exa", "tavily"]);
+  });
+
+  test("detects MCPs from plugin with multiple exports (*Plugin naming)", async () => {
+    await cp(fixtureDir("mcp-multi-export"), projectDir, { recursive: true });
+
+    const result = await build({ projectDir });
+
+    expect(result.mcps).toEqual(["multi-mcp"]);
+  });
+
+  test("detects MCPs from plugin using exports field in package.json", async () => {
+    await cp(fixtureDir("mcp-exports-field"), projectDir, { recursive: true });
+
+    const result = await build({ projectDir });
+
+    expect(result.mcps).toEqual(["exports-mcp"]);
+  });
+
+  test("warns and returns empty mcps when plugin uses runtime APIs", async () => {
+    await cp(fixtureDir("mcp-runtime"), projectDir, { recursive: true });
+
+    const result = await build({ projectDir });
+
+    expect(result.mcps).toEqual([]);
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings.some((w) => w.includes("Could not auto-detect MCP servers"))).toBe(true);
+  });
+
+  test("mcps defaults to [] when no entry point and no hugo.mcps", async () => {
+    await writePackageJson();
+    await createAgent("reviewer");
+
+    const result = await build({ projectDir });
+
+    expect(result.mcps).toEqual([]);
+  });
+
+  test("workflow providing only MCPs is valid", async () => {
+    await cp(fixtureDir("mcp-only"), projectDir, { recursive: true });
+
+    const result = await build({ projectDir });
+
+    expect(result.mcps).toEqual(["standalone-mcp"]);
+    expect(result.agents).toEqual([]);
+    expect(result.commands).toEqual([]);
+    expect(result.skills).toEqual([]);
   });
 });

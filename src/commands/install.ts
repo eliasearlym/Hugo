@@ -36,6 +36,7 @@ export type InstallResult = {
   agents: string[];
   commands: string[];
   skills: string[];
+  mcps: string[];
   warnings: CollisionWarning[];
 };
 
@@ -153,6 +154,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     agents: manifest.agents,
     commands: manifest.commands,
     skills: manifest.skills,
+    mcps: manifest.mcps,
   };
   setWorkflow(finalConfig, workflowName, entry);
 
@@ -170,6 +172,7 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     agents: manifest.agents,
     commands: manifest.commands,
     skills: manifest.skills,
+    mcps: manifest.mcps,
     warnings,
   };
 }

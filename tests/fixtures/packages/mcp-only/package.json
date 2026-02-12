@@ -1,0 +1,8 @@
+{
+  "name": "mcp-only",
+  "version": "1.0.0",
+  "description": "Test fixture — workflow providing only MCPs (no agents/commands/skills)",
+  "hugo": {
+    "mcps": ["standalone-mcp"]
+  }
+}

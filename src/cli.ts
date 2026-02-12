@@ -98,11 +98,12 @@ function parseArgs(argv: string[]): {
 // Output formatting helpers
 // ---------------------------------------------------------------------------
 
-function formatCount(agents: string[], commands: string[], skills: string[]): string {
+function formatCount(agents: string[], commands: string[], skills: string[], mcps: string[]): string {
   const parts: string[] = [];
   if (agents.length > 0) parts.push(`${agents.length} agent${agents.length === 1 ? "" : "s"}`);
   if (commands.length > 0) parts.push(`${commands.length} command${commands.length === 1 ? "" : "s"}`);
   if (skills.length > 0) parts.push(`${skills.length} skill${skills.length === 1 ? "" : "s"}`);
+  if (mcps.length > 0) parts.push(`${mcps.length} mcp${mcps.length === 1 ? "" : "s"}`);
   return parts.join(", ");
 }
 
@@ -147,7 +148,7 @@ async function handleInstall(
     console.log(line);
   }
 
-  const counts = formatCount(result.agents, result.commands, result.skills);
+  const counts = formatCount(result.agents, result.commands, result.skills, result.mcps);
   const countsSuffix = counts ? ` (${counts})` : "";
   console.log(`Installed "${result.workflowName}" v${result.version}${countsSuffix}`);
 }
@@ -168,7 +169,7 @@ async function handleRemove(args: string[]): Promise<void> {
     console.log(`  Warning: ${result.bunWarning}`);
   }
 
-  const counts = formatCount(result.agents, result.commands, result.skills);
+  const counts = formatCount(result.agents, result.commands, result.skills, result.mcps);
   const countsSuffix = counts ? ` (${counts})` : "";
   console.log(`Removed "${result.workflowName}"${countsSuffix}`);
 }
@@ -204,6 +205,8 @@ async function handleUpdate(args: string[]): Promise<void> {
     for (const c of w.removedCommands) changes.push(`removed command: ${c}`);
     for (const s of w.addedSkills) changes.push(`added skill: ${s}`);
     for (const s of w.removedSkills) changes.push(`removed skill: ${s}`);
+    for (const m of w.addedMcps) changes.push(`added mcp: ${m}`);
+    for (const m of w.removedMcps) changes.push(`removed mcp: ${m}`);
 
     const changeSuffix = changes.length > 0 ? ` (${changes.join(", ")})` : "";
     console.log(
@@ -240,7 +243,7 @@ async function handleEnable(
     for (const line of formatWarnings(w.warnings)) {
       console.log(line);
     }
-    const counts = formatCount(w.entry.agents, w.entry.commands, w.entry.skills);
+    const counts = formatCount(w.entry.agents, w.entry.commands, w.entry.skills, w.entry.mcps);
     const countsSuffix = counts ? ` (${counts})` : "";
     console.log(`Enabled "${w.workflowName}"${countsSuffix}`);
   }
@@ -335,6 +338,9 @@ async function handleList(args: string[]): Promise<void> {
     if (w.skills.length > 0) {
       console.log(`    skills: ${w.skills.join(", ")}`);
     }
+    if (w.mcps.length > 0) {
+      console.log(`    mcps: ${w.mcps.join(", ")}`);
+    }
 
     if (!args[0] && i < result.workflows.length - 1) {
       console.log("");
@@ -395,7 +401,7 @@ async function handleBuild(args: string[]): Promise<void> {
     console.log(`Warning: ${w}`);
   }
 
-  const counts = formatCount(result.agents, result.commands, result.skills);
+  const counts = formatCount(result.agents, result.commands, result.skills, result.mcps);
   console.log(`Built workflow.json (${counts})`);
 }
 

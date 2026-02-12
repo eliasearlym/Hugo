@@ -36,8 +36,9 @@ export function parseManifest(jsonContent: string): WorkflowManifest {
   const agents = parseStringArray(obj.agents, "agents");
   const commands = parseStringArray(obj.commands, "commands");
   const skills = parseStringArray(obj.skills, "skills");
+  const mcps = parseStringArray(obj.mcps, "mcps");
 
-  return { agents, commands, skills };
+  return { agents, commands, skills, mcps };
 }
 
 function parseStringArray(value: unknown, fieldName: string): string[] {

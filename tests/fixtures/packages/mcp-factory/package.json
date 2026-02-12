@@ -1,0 +1,5 @@
+{
+  "name": "mcp-factory",
+  "version": "1.0.0",
+  "description": "Test fixture — workflow with factory function plugin registering MCPs"
+}

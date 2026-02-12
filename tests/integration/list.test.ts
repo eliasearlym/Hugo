@@ -38,6 +38,7 @@ describe("list", () => {
     expect(wf.agents).toEqual(["reviewer"]);
     expect(wf.commands).toEqual(["review"]);
     expect(wf.skills).toEqual(["analysis"]);
+    expect(wf.mcps).toEqual([]);
   });
 
   test("lists multiple workflows", async () => {

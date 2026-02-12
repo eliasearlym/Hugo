@@ -1,7 +1,6 @@
-import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { getWorkflows, hasPlugin } from "./config";
-import { getOpencodeDir } from "./utils";
+import { fileExists, getOpencodeDir } from "./utils";
 import type { CollisionWarning, CrossCheckScope } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -98,7 +97,7 @@ async function checkFileOverrides(
   const results = await Promise.all(
     names.map(async (name) => ({
       name,
-      exists: await fileExistsSafe(join(opencodeDir, dirName, `${name}.md`)),
+      exists: await fileExists(join(opencodeDir, dirName, `${name}.md`)),
     })),
   );
 
@@ -128,7 +127,7 @@ async function checkSkillFileOverrides(
   const results = await Promise.all(
     names.map(async (name) => ({
       name,
-      exists: await fileExistsSafe(join(opencodeDir, "skills", name, "SKILL.md")),
+      exists: await fileExists(join(opencodeDir, "skills", name, "SKILL.md")),
     })),
   );
 
@@ -175,11 +174,4 @@ function checkUserConfigOverrides(
   }
 }
 
-async function fileExistsSafe(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
+
