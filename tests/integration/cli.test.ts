@@ -67,10 +67,36 @@ describe("cli: global", () => {
   });
 
   test("unknown short flag prints error and help", async () => {
-    const { stderr, stdout, exitCode } = await hugo("install", "-v", "@org/pkg");
+    const { stderr, stdout, exitCode } = await hugo("install", "-x", "@org/pkg");
     expect(exitCode).toBe(1);
-    expect(stderr).toContain('unknown flag "-v"');
+    expect(stderr).toContain('unknown flag "-x"');
     expect(stdout).toContain("hugo — workflow manager for OpenCode");
+  });
+
+  test("--version prints version and exits 0", async () => {
+    const { stdout, exitCode } = await hugo("--version");
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  test("-v prints version and exits 0", async () => {
+    const { stdout, exitCode } = await hugo("-v");
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  test("--version takes precedence over command", async () => {
+    const { stdout, exitCode } = await hugo("--version", "list");
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(stdout).not.toContain("Installed workflows");
+  });
+
+  test("--version takes precedence over --help", async () => {
+    const { stdout, exitCode } = await hugo("--version", "--help");
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(stdout).not.toContain("hugo — workflow manager for OpenCode");
   });
 });
 

@@ -11,6 +11,9 @@ import { health } from "./commands/health";
 import { build } from "./commands/build";
 import type { CollisionWarning } from "./workflows/types";
 import { errorMessage } from "./workflows/utils";
+import pkg from "../package.json";
+
+const VERSION = pkg.version;
 
 // ---------------------------------------------------------------------------
 // Help text
@@ -36,6 +39,7 @@ Usage:
   hugo build                   Generate workflow.json (for workflow authors)
 
 Options:
+  --version, -v                Print version
   --force                      Force reinstall (install only)
 
 Examples:
@@ -64,15 +68,16 @@ Examples:
 function parseArgs(argv: string[]): {
   command: string | undefined;
   args: string[];
-  flags: { force: boolean; all: boolean; help: boolean };
+  flags: { force: boolean; all: boolean; help: boolean; version: boolean };
 } {
-  const flags = { force: false, all: false, help: false };
+  const flags = { force: false, all: false, help: false, version: false };
   const positional: string[] = [];
 
   for (const arg of argv) {
     if (arg === "--force") flags.force = true;
     else if (arg === "--all") flags.all = true;
     else if (arg === "--help" || arg === "-h") flags.help = true;
+    else if (arg === "--version" || arg === "-v") flags.version = true;
     else if (arg.startsWith("-")) {
       // Reject unknown flags — prevents typos like --forse from being
       // silently treated as positional arguments (e.g. package specs).
@@ -400,6 +405,11 @@ async function handleBuild(args: string[]): Promise<void> {
 
 async function main(): Promise<void> {
   const { command, args, flags } = parseArgs(process.argv.slice(2));
+
+  if (flags.version) {
+    console.log(VERSION);
+    process.exit(0);
+  }
 
   if (!command || flags.help) {
     console.log(HELP);
