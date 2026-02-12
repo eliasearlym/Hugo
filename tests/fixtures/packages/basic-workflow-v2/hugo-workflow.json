@@ -1,7 +1,0 @@
-{
-  "name": "basic-workflow",
-  "description": "Test fixture — basic workflow v2",
-  "agents": [{ "path": "agents/reviewer.md" }],
-  "skills": [{ "path": "skills/analysis" }],
-  "commands": [{ "path": "commands/lint.md" }]
-}

@@ -1,253 +1,250 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
-import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdir, writeFile, rm } from "node:fs/promises";
+import { createTempDir, fixtureDir, stageFixture, readConfig } from "../helpers";
 import { install } from "../../src/commands/install";
-import { createTempDir, readState, fileExists, readFileContent, fixtureDir, getFileMode } from "../helpers";
 
-let cleanups: Array<() => Promise<void>> = [];
+let projectDir: string;
+let cleanup: () => Promise<void>;
 
-afterEach(async () => {
-  for (const cleanup of cleanups) {
-    await cleanup();
-  }
-  cleanups = [];
+beforeEach(async () => {
+  ({ dir: projectDir, cleanup } = await createTempDir());
 });
 
-async function setup() {
-  const { dir, cleanup } = await createTempDir();
-  cleanups.push(cleanup);
-  return dir;
-}
+afterEach(async () => {
+  await cleanup();
+});
 
 describe("install", () => {
-  test("install basic-workflow — files copied, state correct, hashes match", async () => {
-    const opencodeDir = await setup();
+  test("installs a workflow from file: source", async () => {
     const spec = `file:${fixtureDir("basic-workflow")}`;
-
-    const result = await install(opencodeDir, spec);
+    const result = await install({ projectDir, spec });
 
     expect(result.workflowName).toBe("basic-workflow");
+    expect(result.packageName).toBe("basic-workflow");
     expect(result.version).toBe("1.0.0");
-    expect(result.agents).toBe(1);
-    expect(result.skills).toBe(1);
-    expect(result.commands).toBe(1);
+    expect(result.agents).toEqual(["reviewer"]);
+    expect(result.commands).toEqual(["review"]);
+    expect(result.skills).toEqual(["analysis"]);
 
-    // Verify files exist
-    expect(await fileExists(join(opencodeDir, "agents/reviewer.md"))).toBe(true);
-    expect(await fileExists(join(opencodeDir, "skills/analysis/SKILL.md"))).toBe(true);
-    expect(await fileExists(join(opencodeDir, "skills/analysis/scripts/run.sh"))).toBe(true);
-    expect(await fileExists(join(opencodeDir, "commands/review.md"))).toBe(true);
+    // Verify config was written
+    const config = await readConfig(projectDir);
+    expect(config).not.toBeNull();
+    expect((config as Record<string, unknown>).plugin).toContain(
+      "basic-workflow",
+    );
 
-    // Verify state.json
-    const state = await readState(opencodeDir);
-    expect(state).not.toBeNull();
-    expect(state!.workflows).toHaveLength(1);
+    const hugo = (config as Record<string, unknown>).hugo as Record<
+      string,
+      unknown
+    >;
+    const workflows = hugo.workflows as Record<string, unknown>;
+    expect(workflows["basic-workflow"]).toBeDefined();
+  });
 
-    const entry = state!.workflows[0];
-    expect(entry.name).toBe("basic-workflow");
-    expect(entry.version).toBe("1.0.0");
-    expect(entry.files).toHaveLength(4); // 1 agent + 2 skill files + 1 command
-
-    // Verify hashes are non-empty hex strings
-    for (const file of entry.files) {
-      expect(file.hash).toMatch(/^[0-9a-f]{64}$/);
-    }
-  }, 15_000);
-
-  test("install agents-only — only agent files, no skills/commands dirs", async () => {
-    const opencodeDir = await setup();
+  test("installs agents-only workflow", async () => {
     const spec = `file:${fixtureDir("agents-only")}`;
-
-    const result = await install(opencodeDir, spec);
+    const result = await install({ projectDir, spec });
 
     expect(result.workflowName).toBe("agents-only");
-    expect(result.agents).toBe(2);
-    expect(result.skills).toBe(0);
-    expect(result.commands).toBe(0);
+    expect(result.agents).toEqual(["planner", "executor"]);
+    expect(result.commands).toEqual([]);
+    expect(result.skills).toEqual([]);
+  });
 
-    expect(await fileExists(join(opencodeDir, "agents/planner.md"))).toBe(true);
-    expect(await fileExists(join(opencodeDir, "agents/executor.md"))).toBe(true);
-    expect(await fileExists(join(opencodeDir, "skills"))).toBe(false);
-    expect(await fileExists(join(opencodeDir, "commands"))).toBe(false);
-  }, 15_000);
+  test("errors when workflow already installed", async () => {
+    const spec = `file:${fixtureDir("basic-workflow")}`;
+    await install({ projectDir, spec });
 
-  test("install empty-workflow — no files copied, state entry exists", async () => {
-    const opencodeDir = await setup();
-    const spec = `file:${fixtureDir("empty-workflow")}`;
+    await expect(install({ projectDir, spec })).rejects.toThrow(
+      "is already installed",
+    );
+  });
 
-    const result = await install(opencodeDir, spec);
+  test("--force reinstalls already-installed workflow", async () => {
+    const spec = `file:${fixtureDir("basic-workflow")}`;
+    await install({ projectDir, spec });
 
-    expect(result.workflowName).toBe("empty-workflow");
-    expect(result.agents).toBe(0);
-    expect(result.skills).toBe(0);
-    expect(result.commands).toBe(0);
+    const result = await install({ projectDir, spec, force: true });
+    expect(result.workflowName).toBe("basic-workflow");
+    expect(result.version).toBe("1.0.0");
+  });
 
-    const state = await readState(opencodeDir);
-    expect(state!.workflows).toHaveLength(1);
-    expect(state!.workflows[0].files).toHaveLength(0);
-  }, 15_000);
-
-  test("install no-manifest package — throws clear error", async () => {
-    const opencodeDir = await setup();
+  test("errors when package has no manifest", async () => {
     const spec = `file:${fixtureDir("no-manifest")}`;
+    await expect(install({ projectDir, spec })).rejects.toThrow(
+      "missing workflow.json",
+    );
+  });
 
-    await expect(install(opencodeDir, spec)).rejects.toThrow("hugo-workflow.json");
-  }, 15_000);
-
-  test("install bad-manifest package — throws ManifestError", async () => {
-    const opencodeDir = await setup();
+  test("errors when package has invalid manifest", async () => {
     const spec = `file:${fixtureDir("bad-manifest")}`;
+    await expect(install({ projectDir, spec })).rejects.toThrow(
+      "invalid workflow.json",
+    );
+  });
 
-    await expect(install(opencodeDir, spec)).rejects.toThrow("name");
-  }, 15_000);
-
-  test("install same package twice (clean) — overwrites, updates syncedAt", async () => {
-    const opencodeDir = await setup();
-    const spec = `file:${fixtureDir("basic-workflow")}`;
-
-    await install(opencodeDir, spec);
-    const state1 = await readState(opencodeDir);
-    const syncedAt1 = state1!.workflows[0].syncedAt;
-
-    // Small delay to ensure different timestamp
-    await new Promise((r) => setTimeout(r, 50));
-
-    await install(opencodeDir, spec);
-    const state2 = await readState(opencodeDir);
-
-    expect(state2!.workflows).toHaveLength(1);
-    expect(state2!.workflows[0].syncedAt).not.toBe(syncedAt1);
-  }, 15_000);
-
-  test("install same package twice (modified file) — skips modified with warning", async () => {
-    const opencodeDir = await setup();
-    const spec = `file:${fixtureDir("basic-workflow")}`;
-
-    await install(opencodeDir, spec);
-
-    // Modify a file
-    const reviewerPath = join(opencodeDir, "agents/reviewer.md");
-    await writeFile(reviewerPath, "# Modified by user\n");
-
-    const result = await install(opencodeDir, spec);
-
-    // Should have a warning about the modified file
-    expect(result.warnings.some((w) => w.includes("locally modified"))).toBe(true);
-
-    // Modified file should NOT be overwritten
-    const content = await readFileContent(reviewerPath);
-    expect(content).toBe("# Modified by user\n");
-  }, 15_000);
-
-  test("install with unmanaged file conflict — skips with warning", async () => {
-    const opencodeDir = await setup();
-
-    // Pre-create a file that will conflict
-    await mkdir(join(opencodeDir, "agents"), { recursive: true });
-    await writeFile(join(opencodeDir, "agents/reviewer.md"), "# Pre-existing file\n");
-
-    const spec = `file:${fixtureDir("basic-workflow")}`;
-    const result = await install(opencodeDir, spec);
-
-    // Should warn about the unmanaged conflict
-    expect(result.warnings.some((w) => w.includes("not managed by Hugo"))).toBe(true);
-
-    // File should not be overwritten
-    const content = await readFileContent(join(opencodeDir, "agents/reviewer.md"));
-    expect(content).toBe("# Pre-existing file\n");
-  }, 15_000);
-
-  test("install with force — overwrites unmanaged file conflict", async () => {
-    const opencodeDir = await setup();
-
-    // Pre-create a file that will conflict
-    await mkdir(join(opencodeDir, "agents"), { recursive: true });
-    await writeFile(join(opencodeDir, "agents/reviewer.md"), "# Pre-existing file\n");
-
-    const spec = `file:${fixtureDir("basic-workflow")}`;
-    const result = await install(opencodeDir, spec, { force: true });
-
-    // No warnings about unmanaged files
-    expect(result.warnings.some((w) => w.includes("not managed by Hugo"))).toBe(false);
-
-    // File should be overwritten with workflow content
-    const content = await readFileContent(join(opencodeDir, "agents/reviewer.md"));
-    expect(content).toContain("Code Reviewer");
-  }, 15_000);
-
-  test("install with force — overwrites locally modified file on reinstall", async () => {
-    const opencodeDir = await setup();
-    const spec = `file:${fixtureDir("basic-workflow")}`;
-
-    await install(opencodeDir, spec);
-
-    // Modify a file
-    const reviewerPath = join(opencodeDir, "agents/reviewer.md");
-    await writeFile(reviewerPath, "# Modified by user\n");
-
-    // Reinstall with force
-    const result = await install(opencodeDir, spec, { force: true });
-
-    // No warnings about modified files
-    expect(result.warnings.some((w) => w.includes("locally modified"))).toBe(false);
-
-    // File should be overwritten with original content
-    const content = await readFileContent(reviewerPath);
-    expect(content).toContain("Code Reviewer");
-  }, 15_000);
-
-  test("install two workflows that conflict — second throws", async () => {
-    const opencodeDir = await setup();
-
-    await install(opencodeDir, `file:${fixtureDir("basic-workflow")}`);
-
-    await expect(
-      install(opencodeDir, `file:${fixtureDir("conflict-workflow")}`)
-    ).rejects.toThrow("already exists from workflow");
-  }, 15_000);
-
-  test("partial failure cleanup — copied files cleaned up, state clean", async () => {
-    const opencodeDir = await setup();
-    const spec = `file:${fixtureDir("partial-fail")}`;
-
-    await expect(install(opencodeDir, spec)).rejects.toThrow();
-
-    // first.md should have been cleaned up (it was copied before the error)
-    expect(await fileExists(join(opencodeDir, "agents/first.md"))).toBe(false);
-
-    // state.json should not contain the failed workflow
-    const state = await readState(opencodeDir);
-    if (state) {
-      expect(state.workflows.filter((w) => w.name === "partial-fail")).toHaveLength(0);
-    }
-  }, 15_000);
-
-  test("reinstall after partial failure — clean install succeeds", async () => {
-    const opencodeDir = await setup();
-
-    // First: trigger partial failure
+  test("rollback removes package on manifest error", async () => {
+    const spec = `file:${fixtureDir("no-manifest")}`;
     try {
-      await install(opencodeDir, `file:${fixtureDir("partial-fail")}`);
+      await install({ projectDir, spec });
     } catch {
       // expected
     }
 
-    // Now install a working package — should succeed without orphan conflicts
-    const result = await install(opencodeDir, `file:${fixtureDir("basic-workflow")}`);
-    expect(result.workflowName).toBe("basic-workflow");
-    expect(await fileExists(join(opencodeDir, "agents/reviewer.md"))).toBe(true);
-  }, 15_000);
+    // Config should be clean — no plugin entry, no hugo state
+    const config = await readConfig(projectDir);
+    if (config) {
+      const plugins = (config as Record<string, unknown>).plugin;
+      expect(plugins).toBeUndefined();
+    }
+  });
 
-  test("file permissions preserved — run.sh stays executable", async () => {
-    const opencodeDir = await setup();
+  test("detects collision with .opencode/ user file", async () => {
+    // Create a user file that collides
+    const agentsDir = join(projectDir, ".opencode", "agents");
+    await mkdir(agentsDir, { recursive: true });
+    await writeFile(join(agentsDir, "reviewer.md"), "# My custom reviewer");
+
     const spec = `file:${fixtureDir("basic-workflow")}`;
+    const result = await install({ projectDir, spec });
 
-    await install(opencodeDir, spec);
+    const fileWarnings = result.warnings.filter(
+      (w) => w.type === "overridden-by-file",
+    );
+    expect(fileWarnings.length).toBe(1);
+    expect(fileWarnings[0].entity).toBe("agent");
+    expect(fileWarnings[0].name).toBe("reviewer");
+  });
 
-    const destPath = join(opencodeDir, "skills/analysis/scripts/run.sh");
-    const mode = await getFileMode(destPath);
+  test("detects collision with user config entry", async () => {
+    // Create config with a user-defined agent
+    await writeFile(
+      join(projectDir, "opencode.json"),
+      JSON.stringify({
+        agent: { reviewer: { description: "my reviewer" } },
+      }),
+    );
 
-    // Check that owner execute bit is set (0o100)
-    expect(mode & 0o100).toBe(0o100);
-  }, 15_000);
+    const spec = `file:${fixtureDir("basic-workflow")}`;
+    const result = await install({ projectDir, spec });
+
+    const configWarnings = result.warnings.filter(
+      (w) => w.type === "overridden-by-user-config",
+    );
+    expect(configWarnings.length).toBe(1);
+    expect(configWarnings[0].entity).toBe("agent");
+    expect(configWarnings[0].name).toBe("reviewer");
+  });
+
+  test("detects cross-workflow collision", async () => {
+    // Install first workflow
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("basic-workflow")}`,
+    });
+
+    // Install second workflow that has the same agent name
+    const result = await install({
+      projectDir,
+      spec: `file:${fixtureDir("conflict-workflow")}`,
+    });
+
+    const crossWarnings = result.warnings.filter(
+      (w) => w.type === "cross-workflow",
+    );
+    expect(crossWarnings.length).toBe(1);
+    expect(crossWarnings[0].entity).toBe("agent");
+    expect(crossWarnings[0].name).toBe("reviewer");
+  });
+
+  test("installs empty workflow (no agents/commands/skills)", async () => {
+    const spec = `file:${fixtureDir("empty-workflow")}`;
+    const result = await install({ projectDir, spec });
+
+    expect(result.workflowName).toBe("empty-workflow");
+    expect(result.agents).toEqual([]);
+    expect(result.commands).toEqual([]);
+    expect(result.skills).toEqual([]);
+  });
+
+  test("preserves existing config keys", async () => {
+    // Pre-populate config with user settings
+    await writeFile(
+      join(projectDir, "opencode.json"),
+      JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        theme: "dark",
+        mcp: { some_server: {} },
+      }),
+    );
+
+    const spec = `file:${fixtureDir("basic-workflow")}`;
+    await install({ projectDir, spec });
+
+    const config = await readConfig(projectDir);
+    expect(config).not.toBeNull();
+    expect((config as Record<string, unknown>).$schema).toBe(
+      "https://opencode.ai/config.json",
+    );
+    expect((config as Record<string, unknown>).theme).toBe("dark");
+    expect((config as Record<string, unknown>).mcp).toEqual({
+      some_server: {},
+    });
+  });
+
+  test("errors when workflow name conflicts with different package (file source)", async () => {
+    // Install basic-workflow from original package
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("basic-workflow")}`,
+    });
+
+    // Try to force-install scoped package that derives to the same workflow name.
+    // @other-org/basic-workflow → deriveWorkflowName → "basic-workflow"
+    // Without --force, the "already installed" check fires first.
+    // With --force, the package-name-mismatch check is reached.
+    await expect(
+      install({
+        projectDir,
+        spec: `file:${fixtureDir("scoped-basic-workflow")}`,
+        force: true,
+      }),
+    ).rejects.toThrow(
+      'Workflow name "basic-workflow" conflicts with already-installed workflow from package "basic-workflow"',
+    );
+  });
+
+  test("rollback removes package when package.json is corrupt in installed dir", async () => {
+    // Use a staged copy so corrupting package.json doesn't affect the shared fixture.
+    // stageFixture creates an isolated copy we can safely mutate.
+    const staged = await stageFixture("basic-workflow");
+    try {
+      // First, install normally
+      await install({ projectDir, spec: staged.spec });
+
+      // Corrupt the package.json in the staged source directory.
+      // Since bun file: installs link/copy from the source, this
+      // ensures the next bun add will install a package with corrupt JSON.
+      await writeFile(join(staged.dir, "package.json"), "{{not valid json");
+
+      // Force reinstall — bun add will fail because the source package.json is corrupt
+      await expect(
+        install({ projectDir, spec: staged.spec, force: true }),
+      ).rejects.toThrow();
+
+      // Config should still have the original workflow from the first install
+      // (the failed reinstall should not have corrupted state)
+      const config = await readConfig(projectDir);
+      expect(config).not.toBeNull();
+      const hugo = (config as Record<string, unknown>).hugo as Record<
+        string,
+        unknown
+      >;
+      const workflows = hugo.workflows as Record<string, unknown>;
+      expect(workflows["basic-workflow"]).toBeDefined();
+    } finally {
+      await staged.cleanup();
+    }
+  });
 });

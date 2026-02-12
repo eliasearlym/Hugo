@@ -1,14 +1,16 @@
 import { mkdtemp, readFile, rm, cp, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import type { WorkflowState } from "../src/workflows/types";
 
 const FIXTURES_DIR = resolve(__dirname, "fixtures/packages");
 
 /**
  * Create a fresh temp directory for a test. Returns the path and a cleanup function.
  */
-export async function createTempDir(): Promise<{ dir: string; cleanup: () => Promise<void> }> {
+export async function createTempDir(): Promise<{
+  dir: string;
+  cleanup: () => Promise<void>;
+}> {
   const dir = await mkdtemp(join(tmpdir(), "hugo-test-"));
   return {
     dir,
@@ -19,13 +21,15 @@ export async function createTempDir(): Promise<{ dir: string; cleanup: () => Pro
 }
 
 /**
- * Read and parse state.json from an .opencode directory.
+ * Read and parse opencode.json from a project directory.
  * Returns null if the file doesn't exist.
  */
-export async function readState(opencodeDir: string): Promise<WorkflowState | null> {
-  const statePath = join(opencodeDir, "state.json");
+export async function readConfig(
+  projectDir: string,
+): Promise<Record<string, unknown> | null> {
+  const configPath = join(projectDir, "opencode.json");
   try {
-    return JSON.parse(await readFile(statePath, "utf-8"));
+    return JSON.parse(await readFile(configPath, "utf-8"));
   } catch {
     return null;
   }
@@ -107,23 +111,30 @@ export async function runCLI(
     env: { ...process.env, BUN_ENV: "test" },
   });
 
+  let timer: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => {
+    timer = setTimeout(() => {
       proc.kill();
-      reject(new Error(`CLI timed out after ${timeout}ms: hugo ${args.join(" ")}`));
+      reject(
+        new Error(`CLI timed out after ${timeout}ms: hugo ${args.join(" ")}`),
+      );
     }, timeout);
   });
 
-  const [exitCode, stdout, stderr] = await Promise.race([
-    Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]),
-    timeoutPromise,
-  ]);
+  try {
+    const [exitCode, stdout, stderr] = await Promise.race([
+      Promise.all([
+        proc.exited,
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]),
+      timeoutPromise,
+    ]);
 
-  return { stdout, stderr, exitCode };
+    return { stdout, stderr, exitCode };
+  } finally {
+    clearTimeout(timer!);
+  }
 }
 
 /**

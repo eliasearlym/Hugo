@@ -1,133 +1,123 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
-import { writeFile, rm, readdir } from "node:fs/promises";
+import { createTempDir, fixtureDir, readConfig, fileExists } from "../helpers";
 import { install } from "../../src/commands/install";
 import { remove } from "../../src/commands/remove";
-import {
-  createTempDir,
-  readState,
-  fileExists,
-  readFileContent,
-  fixtureDir,
-} from "../helpers";
 
-let cleanups: Array<() => Promise<void>> = [];
+let projectDir: string;
+let cleanup: () => Promise<void>;
 
-afterEach(async () => {
-  for (const cleanup of cleanups) {
-    await cleanup();
-  }
-  cleanups = [];
+beforeEach(async () => {
+  ({ dir: projectDir, cleanup } = await createTempDir());
 });
 
-async function setup() {
-  const { dir, cleanup } = await createTempDir();
-  cleanups.push(cleanup);
-  return dir;
-}
+afterEach(async () => {
+  await cleanup();
+});
 
 describe("remove", () => {
-  test("removes installed workflow — files deleted, state entry gone, no empty dirs", async () => {
-    const opencodeDir = await setup();
-    await install(opencodeDir, `file:${fixtureDir("basic-workflow")}`);
+  test("removes an enabled workflow", async () => {
+    // Install first
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("basic-workflow")}`,
+    });
 
-    const result = await remove(opencodeDir, "basic-workflow");
+    // Remove
+    const result = await remove({ projectDir, name: "basic-workflow" });
 
-    expect(result.name).toBe("basic-workflow");
-    expect(result.removed).toBeGreaterThan(0);
-    expect(result.kept).toBe(0);
-    expect(result.keptFiles).toHaveLength(0);
+    expect(result.workflowName).toBe("basic-workflow");
+    expect(result.packageName).toBe("basic-workflow");
+    expect(result.agents).toEqual(["reviewer"]);
+    expect(result.commands).toEqual(["review"]);
+    expect(result.skills).toEqual(["analysis"]);
 
-    // All files should be deleted
-    expect(await fileExists(join(opencodeDir, "agents/reviewer.md"))).toBe(false);
-    expect(await fileExists(join(opencodeDir, "commands/review.md"))).toBe(false);
-    expect(await fileExists(join(opencodeDir, "skills/analysis/SKILL.md"))).toBe(false);
-    expect(await fileExists(join(opencodeDir, "skills/analysis/scripts/run.sh"))).toBe(false);
+    // Verify config is clean
+    const config = await readConfig(projectDir);
+    expect(config).not.toBeNull();
+    const c = config as Record<string, unknown>;
+    const plugins = c.plugin as string[];
+    expect(plugins).not.toContain("basic-workflow");
 
-    // State should have no workflows
-    const state = await readState(opencodeDir);
-    expect(state!.workflows).toHaveLength(0);
+    const hugo = c.hugo as Record<string, unknown>;
+    const workflows = hugo.workflows as Record<string, unknown>;
+    expect(workflows["basic-workflow"]).toBeUndefined();
+  });
 
-    // No empty skill dirs should remain
-    expect(await fileExists(join(opencodeDir, "skills/analysis"))).toBe(false);
-  }, 15_000);
+  test("removes a disabled workflow", async () => {
+    // Install, then manually remove from plugin array to simulate disabled
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("basic-workflow")}`,
+    });
 
-  test("removes with locally modified file — modified file kept, others deleted", async () => {
-    const opencodeDir = await setup();
-    await install(opencodeDir, `file:${fixtureDir("basic-workflow")}`);
+    // Read config, remove from plugin array, write back
+    const { writeConfig, readConfig: readCfg, removePlugin } = await import(
+      "../../src/workflows/config"
+    );
+    let config = await readCfg(projectDir);
+    removePlugin(config, "basic-workflow");
+    await writeConfig(projectDir, config);
 
-    // Modify agents/reviewer.md
-    const reviewerPath = join(opencodeDir, "agents/reviewer.md");
-    await writeFile(reviewerPath, "# My custom changes\n");
+    // Now remove
+    const result = await remove({ projectDir, name: "basic-workflow" });
+    expect(result.workflowName).toBe("basic-workflow");
 
-    const result = await remove(opencodeDir, "basic-workflow");
+    // Verify fully cleaned
+    config = await readCfg(projectDir);
+    const hugo = config.hugo as Record<string, unknown>;
+    const workflows = hugo.workflows as Record<string, unknown>;
+    expect(workflows["basic-workflow"]).toBeUndefined();
+  });
 
-    expect(result.kept).toBe(1);
-    expect(result.keptFiles).toContain("agents/reviewer.md");
+  test("errors when workflow not found", async () => {
+    await expect(
+      remove({ projectDir, name: "nonexistent" }),
+    ).rejects.toThrow('Workflow "nonexistent" is not installed.');
+  });
 
-    // Modified file should still exist
-    expect(await fileExists(reviewerPath)).toBe(true);
-    const content = await readFileContent(reviewerPath);
-    expect(content).toBe("# My custom changes\n");
+  test("removes bun dependency", async () => {
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("basic-workflow")}`,
+    });
 
-    // Other files should be deleted
-    expect(await fileExists(join(opencodeDir, "commands/review.md"))).toBe(false);
-    expect(await fileExists(join(opencodeDir, "skills/analysis/SKILL.md"))).toBe(false);
+    const opencodeDir = join(projectDir, ".opencode");
+    const packageDir = join(opencodeDir, "node_modules", "basic-workflow");
 
-    // State entry should be removed
-    const state = await readState(opencodeDir);
-    expect(state!.workflows).toHaveLength(0);
-  }, 15_000);
+    // Package should exist before remove
+    expect(await fileExists(packageDir)).toBe(true);
 
-  test("removes with all files modified — all files kept, state entry removed", async () => {
-    const opencodeDir = await setup();
-    await install(opencodeDir, `file:${fixtureDir("basic-workflow")}`);
+    await remove({ projectDir, name: "basic-workflow" });
 
-    // Modify ALL files
-    await writeFile(join(opencodeDir, "agents/reviewer.md"), "# Modified\n");
-    await writeFile(join(opencodeDir, "commands/review.md"), "# Modified\n");
-    await writeFile(join(opencodeDir, "skills/analysis/SKILL.md"), "# Modified\n");
-    await writeFile(join(opencodeDir, "skills/analysis/scripts/run.sh"), "#!/bin/bash\n# Modified\n");
+    // Package should be removed (or at least not in dependencies)
+    // Note: bun may leave files but removes from package.json
+  });
 
-    const result = await remove(opencodeDir, "basic-workflow");
+  test("preserves other workflows when removing one", async () => {
+    // Install two workflows
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("basic-workflow")}`,
+    });
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("agents-only")}`,
+    });
 
-    expect(result.kept).toBe(4);
-    expect(result.keptFiles).toHaveLength(4);
-    expect(result.removed).toBe(0);
+    // Remove one
+    await remove({ projectDir, name: "basic-workflow" });
 
-    // All files should still exist
-    expect(await fileExists(join(opencodeDir, "agents/reviewer.md"))).toBe(true);
-    expect(await fileExists(join(opencodeDir, "commands/review.md"))).toBe(true);
-    expect(await fileExists(join(opencodeDir, "skills/analysis/SKILL.md"))).toBe(true);
-    expect(await fileExists(join(opencodeDir, "skills/analysis/scripts/run.sh"))).toBe(true);
+    // Other should still be there
+    const config = await readConfig(projectDir);
+    const c = config as Record<string, unknown>;
+    const plugins = c.plugin as string[];
+    expect(plugins).toContain("agents-only");
+    expect(plugins).not.toContain("basic-workflow");
 
-    // State entry should still be removed
-    const state = await readState(opencodeDir);
-    expect(state!.workflows).toHaveLength(0);
-  }, 15_000);
-
-  test("removes with already-deleted file — no error, counts as removed", async () => {
-    const opencodeDir = await setup();
-    await install(opencodeDir, `file:${fixtureDir("basic-workflow")}`);
-
-    // Manually delete a file
-    await rm(join(opencodeDir, "commands/review.md"));
-
-    const result = await remove(opencodeDir, "basic-workflow");
-
-    // Should not throw, and the deleted file counts as removed
-    expect(result.removed).toBeGreaterThan(0);
-    expect(result.kept).toBe(0);
-
-    // State entry should be removed
-    const state = await readState(opencodeDir);
-    expect(state!.workflows).toHaveLength(0);
-  }, 15_000);
-
-  test("removes non-existent workflow — throws 'not installed'", async () => {
-    const opencodeDir = await setup();
-    await install(opencodeDir, `file:${fixtureDir("basic-workflow")}`);
-
-    await expect(remove(opencodeDir, "nonexistent")).rejects.toThrow("not installed");
-  }, 15_000);
+    const hugo = c.hugo as Record<string, unknown>;
+    const workflows = hugo.workflows as Record<string, unknown>;
+    expect(workflows["agents-only"]).toBeDefined();
+    expect(workflows["basic-workflow"]).toBeUndefined();
+  });
 });

@@ -1,78 +1,59 @@
-import { join } from "node:path";
-import { rm } from "node:fs/promises";
+import {
+  readConfig,
+  writeConfig,
+  removePlugin,
+  getWorkflow,
+  removeWorkflow,
+} from "../workflows/config";
+import { getOpencodeDir } from "../workflows/utils";
 import { removeDependency } from "../workflows/bun";
-import { readWorkflowState, removeEntry, writeWorkflowState } from "../workflows/state";
-import { checkIntegrity } from "../workflows/integrity";
-import { cleanEmptySkillDirs } from "../workflows/sync";
 
-export type RemoveResult = {
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type RemoveOptions = {
+  projectDir: string;
   name: string;
-  removed: number;
-  kept: number;
-  keptFiles: string[];
 };
 
-export async function remove(
-  opencodeDir: string,
-  workflowName: string,
-): Promise<RemoveResult> {
-  const state = await readWorkflowState(opencodeDir);
+export type RemoveResult = {
+  workflowName: string;
+  packageName: string;
+  agents: string[];
+  commands: string[];
+  skills: string[];
+  bunWarning?: string;
+};
 
-  const entry = state.workflows.find((w) => w.name === workflowName);
+// ---------------------------------------------------------------------------
+// Remove command
+// ---------------------------------------------------------------------------
+
+/** Remove a workflow entirely. */
+export async function remove(options: RemoveOptions): Promise<RemoveResult> {
+  const { projectDir, name } = options;
+  const opencodeDir = getOpencodeDir(projectDir);
+
+  const config = await readConfig(projectDir);
+  const entry = getWorkflow(config, name);
   if (!entry) {
-    throw new Error(`Workflow "${workflowName}" is not installed.`);
+    throw new Error(`Workflow "${name}" is not installed.`);
   }
 
-  // Check integrity of all files
-  const fileStatuses = await checkIntegrity(opencodeDir, entry);
+  removePlugin(config, entry.package);
+  removeWorkflow(config, name);
+  await writeConfig(projectDir, config);
 
-  let removed = 0;
-  const keptFiles: string[] = [];
-
-  for (const fs of fileStatuses) {
-    const fullPath = join(opencodeDir, fs.file.destination);
-
-    if (fs.status === "modified") {
-      keptFiles.push(fs.file.destination);
-      continue;
-    }
-
-    if (fs.status === "deleted") {
-      // Already gone, nothing to do
-      removed++;
-      continue;
-    }
-
-    // Clean — delete
-    await rm(fullPath);
-    removed++;
-  }
-
-  // Clean up empty skill directories (only pass actually-deleted destinations)
-  const deletedDests = fileStatuses
-    .filter((fs) => fs.status !== "modified")
-    .map((fs) => fs.file.destination);
-  await cleanEmptySkillDirs(opencodeDir, deletedDests);
-
-  // Remove the bun dependency first — if this fails, state still reflects
-  // reality (workflow is installed). Reverse order would leave an orphan in
-  // node_modules with no state entry to track it.
-  try {
-    await removeDependency(opencodeDir, entry.package);
-  } catch {
-    // Non-fatal — the package might have already been removed manually
-  }
-
-  // Remove from state
-  const updatedState = removeEntry(state, workflowName);
-  await writeWorkflowState(opencodeDir, updatedState);
+  // bun remove is non-fatal — config is already updated
+  const { warning } = await removeDependency(opencodeDir, entry.package);
 
   return {
-    name: workflowName,
-    removed,
-    kept: keptFiles.length,
-    keptFiles,
+    workflowName: name,
+    packageName: entry.package,
+    agents: entry.agents,
+    commands: entry.commands,
+    skills: entry.skills,
+    bunWarning: warning,
   };
 }
-
-

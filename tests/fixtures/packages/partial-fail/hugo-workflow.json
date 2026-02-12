@@ -1,8 +1,0 @@
-{
-  "name": "partial-fail",
-  "description": "Test fixture — partial copy failure",
-  "agents": [
-    { "path": "agents/first.md" },
-    { "path": "agents/ghost.md" }
-  ]
-}

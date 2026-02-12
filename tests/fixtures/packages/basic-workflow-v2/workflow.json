@@ -1,0 +1,5 @@
+{
+  "agents": ["reviewer"],
+  "commands": ["lint"],
+  "skills": ["analysis"]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "@other-org/basic-workflow",
+  "version": "1.0.0",
+  "description": "Test fixture — scoped package that derives to same workflow name"
+}

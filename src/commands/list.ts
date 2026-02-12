@@ -1,56 +1,82 @@
-import { readWorkflowState } from "../workflows/state";
-import { AGENTS_DIR, SKILLS_DIR, COMMANDS_DIR } from "../workflows/constants";
-import type { WorkflowEntry } from "../workflows/types";
+import {
+  readConfig,
+  getWorkflows,
+  getWorkflow,
+  hasPlugin,
+} from "../workflows/config";
 
-export type ListEntry = {
-  name: string;
-  package: string;
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type ListOptions = {
+  projectDir: string;
+  name?: string; // specific workflow, or undefined for all
+};
+
+export type WorkflowListEntry = {
+  workflowName: string;
+  packageName: string;
   version: string;
-  syncedAt: string;
-  agents: number;
-  skills: number;
-  commands: number;
+  enabled: boolean;
+  agents: string[];
+  commands: string[];
+  skills: string[];
 };
 
 export type ListResult = {
-  workflows: ListEntry[];
+  workflows: WorkflowListEntry[];
 };
 
-export async function list(opencodeDir: string): Promise<ListResult> {
-  const state = await readWorkflowState(opencodeDir);
+// ---------------------------------------------------------------------------
+// List command
+// ---------------------------------------------------------------------------
 
-  return {
-    workflows: state.workflows.map((entry) => ({
-      name: entry.name,
-      package: entry.package,
-      version: entry.version,
-      syncedAt: entry.syncedAt,
-      ...countFiles(entry),
-    })),
-  };
-}
+/**
+ * List installed workflows with details and enabled/disabled status.
+ * Reads only from cached Hugo state in opencode.json — no node_modules access.
+ */
+export async function list(options: ListOptions): Promise<ListResult> {
+  const { projectDir, name } = options;
 
-function countFiles(entry: WorkflowEntry) {
-  let agents = 0;
-  let skills = 0;
-  let commands = 0;
+  const config = await readConfig(projectDir);
 
-  const skillDirs = new Set<string>();
-
-  for (const file of entry.files) {
-    if (file.destination.startsWith(AGENTS_DIR + "/")) {
-      agents++;
-    } else if (file.destination.startsWith(COMMANDS_DIR + "/")) {
-      commands++;
-    } else if (file.destination.startsWith(SKILLS_DIR + "/")) {
-      // Count unique skill directories, not individual files
-      const parts = file.destination.split("/");
-      if (parts.length >= 2) {
-        skillDirs.add(parts[1]);
-      }
+  if (name) {
+    const entry = getWorkflow(config, name);
+    if (!entry) {
+      throw new Error(`Workflow "${name}" is not installed.`);
     }
+    return {
+      workflows: [
+        {
+          workflowName: name,
+          packageName: entry.package,
+          version: entry.version,
+          enabled: hasPlugin(config, entry.package),
+          agents: entry.agents,
+          commands: entry.commands,
+          skills: entry.skills,
+        },
+      ],
+    };
   }
 
-  skills = skillDirs.size;
-  return { agents, skills, commands };
+  const workflows = getWorkflows(config);
+  const entries = Object.entries(workflows);
+
+  if (entries.length === 0) {
+    return { workflows: [] };
+  }
+
+  return {
+    workflows: entries.map(([workflowName, entry]) => ({
+      workflowName,
+      packageName: entry.package,
+      version: entry.version,
+      enabled: hasPlugin(config, entry.package),
+      agents: entry.agents,
+      commands: entry.commands,
+      skills: entry.skills,
+    })),
+  };
 }

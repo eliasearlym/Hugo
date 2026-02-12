@@ -1,194 +1,175 @@
 import { join } from "node:path";
-import { readFile, exists } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import {
-  addDependency,
+  readConfig,
+  writeConfig,
+  addPlugin,
+  getWorkflow,
+  setWorkflow,
+} from "../workflows/config";
+import {
+  installPackage,
   removeDependency,
-  parsePackageSpec,
   getInstalledVersion,
-  getPackageDir,
+  parsePackageSpec,
   packageNameFromSource,
 } from "../workflows/bun";
 import { parseManifest } from "../workflows/manifest";
-import { MANIFEST_FILE } from "../workflows/constants";
-import { readWorkflowState, writeWorkflowState, addEntry, sourceEquals } from "../workflows/state";
-import { syncWorkflow } from "../workflows/sync";
-import type { WorkflowEntry, PackageSource } from "../workflows/types";
+import { deriveWorkflowName, errorMessage, getOpencodeDir } from "../workflows/utils";
+import { detectCollisions } from "../workflows/collisions";
+import type { CollisionWarning, WorkflowEntry } from "../workflows/types";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type InstallOptions = {
+  projectDir: string;
+  spec: string;
+  force?: boolean;
+};
 
 export type InstallResult = {
   workflowName: string;
+  packageName: string;
   version: string;
-  agents: number;
-  skills: number;
-  commands: number;
-  warnings: string[];
+  agents: string[];
+  commands: string[];
+  skills: string[];
+  warnings: CollisionWarning[];
 };
 
-export async function install(
-  opencodeDir: string,
-  packageSpec: string,
-  options?: { force?: boolean },
-): Promise<InstallResult> {
-  const { source, warnings: parseWarnings } = parsePackageSpec(packageSpec);
-
-  // 1. Snapshot deps before install (for git source resolution)
-  const depsBefore = await readDeps(opencodeDir);
-
-  // 2. Add dependency and install via bun
-  await addDependency(opencodeDir, packageSpec);
-
-  // 3. Resolve package name — needed for rollback if later steps fail
-  //    NOTE: If this fails for git sources, rollback uses the raw spec (e.g.
-  //    "github:org/repo"), which `bun remove` may not recognize. The dep can
-  //    leak in package.json. This is acceptable — the failure case is rare
-  //    (only when dep diffing can't identify the new package) and the leaked
-  //    dep is harmless. A manual `bun remove <name>` cleans it up.
-  let packageName: string;
-  try {
-    packageName = await resolvePackageName(opencodeDir, source, packageSpec, depsBefore);
-  } catch (err) {
-    await rollback(opencodeDir, packageSpec);
-    throw err;
-  }
-
-  try {
-    const packageDir = getPackageDir(opencodeDir, packageName);
-
-    // 4. Read and parse manifest
-    const manifestPath = join(packageDir, MANIFEST_FILE);
-    let manifestContent: string;
-    try {
-      manifestContent = await readFile(manifestPath, "utf-8");
-    } catch {
-      throw new Error(
-        `Package "${packageSpec}" does not contain a ${MANIFEST_FILE} manifest.`,
-      );
-    }
-    const manifest = parseManifest(manifestContent);
-
-    // 5. Resolve installed version
-    const version = await getInstalledVersion(packageDir, source);
-
-    // 6. Read existing workflow state
-    const lock = await readWorkflowState(opencodeDir);
-
-    // 7. Sync files (includes conflict detection, copying, hashing)
-    const syncResult = await syncWorkflow(
-      packageDir,
-      manifest,
-      opencodeDir,
-      lock,
-      manifest.name,
-      { force: options?.force },
-    );
-
-    // 8. Create workflow entry
-    const entry: WorkflowEntry = {
-      name: manifest.name,
-      package: packageName,
-      source,
-      version,
-      syncedAt: new Date().toISOString(),
-      files: syncResult.files,
-    };
-
-    // 9. Check if this replaces an existing workflow from the same source
-    const replaced = lock.workflows.find(
-      (w) => w.name !== manifest.name && sourceEquals(w.source, source),
-    );
-    if (replaced) {
-      syncResult.warnings.push(
-        `Replacing workflow "${replaced.name}" (same package source).`,
-      );
-    }
-
-    // 10. Write updated workflow state
-    const updatedLock = addEntry(lock, entry);
-    await writeWorkflowState(opencodeDir, updatedLock);
-
-    return {
-      workflowName: manifest.name,
-      version,
-      agents: manifest.agents.length,
-      skills: manifest.skills.length,
-      commands: manifest.commands.length,
-      warnings: [...parseWarnings, ...syncResult.warnings],
-    };
-  } catch (err) {
-    await rollback(opencodeDir, packageName);
-    throw err;
-  }
-}
+// ---------------------------------------------------------------------------
+// Install command
+// ---------------------------------------------------------------------------
 
 /**
- * Best-effort cleanup: remove the dependency that was added before the failure.
- * Silently swallows errors — the original error is what matters.
+ * Install a workflow package.
+ *
+ * Rollback: if anything fails after bun add but before writeConfig,
+ * run bun remove to clean up the installed package.
  */
-async function rollback(opencodeDir: string, packageSpec: string): Promise<void> {
-  try {
-    await removeDependency(opencodeDir, packageSpec);
-  } catch {
-    // Rollback is best-effort
-  }
-}
+export async function install(options: InstallOptions): Promise<InstallResult> {
+  const { projectDir, spec, force = false } = options;
+  const opencodeDir = getOpencodeDir(projectDir);
 
-/**
- * Read current dependency names from .opencode/package.json.
- * Returns an empty set if the file doesn't exist yet.
- */
-async function readDeps(opencodeDir: string): Promise<Set<string>> {
-  const pkgJsonPath = join(opencodeDir, "package.json");
-  if (!(await exists(pkgJsonPath))) {
-    return new Set();
-  }
-  const pkgJson = JSON.parse(await readFile(pkgJsonPath, "utf-8"));
-  return new Set(Object.keys(pkgJson.dependencies ?? {}));
-}
+  const { source } = parsePackageSpec(spec);
 
-/**
- * For registry sources we can derive the package name directly.
- * For git sources, we diff package.json before/after `bun add`
- * to find exactly what was added.
- */
-async function resolvePackageName(
-  opencodeDir: string,
-  source: PackageSource,
-  originalSpec: string,
-  depsBefore: Set<string>,
-): Promise<string> {
+  // For registry sources, we know the name upfront — check early to avoid
+  // a pointless download. Read config once and reuse for the entire operation.
+  let config: Record<string, unknown> | undefined;
+
   if (source.type === "registry") {
-    return packageNameFromSource(source);
-  }
+    const knownPackageName = packageNameFromSource(source);
+    const knownWorkflowName = deriveWorkflowName(knownPackageName);
+    config = await readConfig(projectDir);
+    const existing = getWorkflow(config, knownWorkflowName);
 
-  // Diff deps before/after to find the new entry
-  const depsAfter = await readDeps(opencodeDir);
-  const newDeps = [...depsAfter].filter((name) => !depsBefore.has(name));
+    if (existing && !force) {
+      throw new Error(
+        `"${knownWorkflowName}" is already installed. Use --force to reinstall.`,
+      );
+    }
 
-  if (newDeps.length === 1) {
-    return newDeps[0];
-  }
-
-  if (newDeps.length > 1) {
-    throw new Error(
-      `Multiple new dependencies detected after installing "${originalSpec}": ${newDeps.join(", ")}. ` +
-        `Cannot determine which one is the workflow package.`,
-    );
-  }
-
-  // No new deps — package may have already been in dependencies (reinstall).
-  // Read the installed package.json to find the name bun resolved to.
-  const pkgJsonPath = join(opencodeDir, "package.json");
-  const pkgJson = JSON.parse(await readFile(pkgJsonPath, "utf-8"));
-  const deps = pkgJson.dependencies ?? {};
-
-  // Check if any existing dep's value matches the original spec
-  for (const [name, value] of Object.entries(deps)) {
-    if (value === originalSpec) {
-      return name;
+    if (existing && existing.package !== knownPackageName) {
+      throw new Error(
+        `Workflow name "${knownWorkflowName}" conflicts with already-installed workflow from package "${existing.package}".`,
+      );
     }
   }
 
-  throw new Error(
-    `Could not determine package name for "${originalSpec}" after install. ` +
-      `Check that the package was installed correctly.`,
+  const { packageName, packageDir } =
+    await installPackage(opencodeDir, spec);
+
+  // For git/file sources, we can only check for duplicates after install
+  // because the package name isn't known until bun resolves it.
+  const workflowName = deriveWorkflowName(packageName);
+
+  if (source.type !== "registry") {
+    config = await readConfig(projectDir);
+    const existing = getWorkflow(config, workflowName);
+
+    if (existing && !force) {
+      await removeDependency(opencodeDir, packageName);
+      throw new Error(
+        `"${workflowName}" is already installed. Use --force to reinstall.`,
+      );
+    }
+
+    if (existing && existing.package !== packageName) {
+      await removeDependency(opencodeDir, packageName);
+      throw new Error(
+        `Workflow name "${workflowName}" conflicts with already-installed workflow from package "${existing.package}".`,
+      );
+    }
+  }
+
+  let manifestContent: string;
+  try {
+    manifestContent = await readFile(
+      join(packageDir, "workflow.json"),
+      "utf-8",
+    );
+  } catch {
+    await removeDependency(opencodeDir, packageName);
+    throw new Error(
+      `Package "${packageName}" is not a workflow package (missing workflow.json).`,
+    );
+  }
+
+  let manifest;
+  try {
+    manifest = parseManifest(manifestContent);
+  } catch (err) {
+    await removeDependency(opencodeDir, packageName);
+    throw new Error(
+      `Package "${packageName}" has an invalid workflow.json: ${errorMessage(err)}`,
+    );
+  }
+
+  let version: string;
+  try {
+    version = await getInstalledVersion(packageDir);
+  } catch (err) {
+    await removeDependency(opencodeDir, packageName);
+    throw err;
+  }
+
+  // TypeScript can't see that one of the two branches above always assigns
+  // config, so we assert it here.
+  const finalConfig = config!;
+
+  const warnings = await detectCollisions(
+    workflowName,
+    manifest,
+    finalConfig,
+    projectDir,
   );
+
+  addPlugin(finalConfig, packageName);
+  const entry: WorkflowEntry = {
+    package: packageName,
+    version,
+    agents: manifest.agents,
+    commands: manifest.commands,
+    skills: manifest.skills,
+  };
+  setWorkflow(finalConfig, workflowName, entry);
+
+  try {
+    await writeConfig(projectDir, finalConfig);
+  } catch (err) {
+    await removeDependency(opencodeDir, packageName);
+    throw err;
+  }
+
+  return {
+    workflowName,
+    packageName,
+    version,
+    agents: manifest.agents,
+    commands: manifest.commands,
+    skills: manifest.skills,
+    warnings,
+  };
 }

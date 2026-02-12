@@ -1,120 +1,219 @@
-import { describe, test, expect } from "bun:test";
-import { parsePackageSpec, packageNameFromSource } from "../../src/workflows/bun";
-import type { PackageSource } from "../../src/workflows/types";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { join } from "node:path";
+import { writeFile, mkdir } from "node:fs/promises";
+import { parsePackageSpec, getInstalledVersion } from "../../src/workflows/bun";
+import { createTempDir } from "../helpers";
 
 describe("parsePackageSpec", () => {
-  test('"some-package" → registry source', () => {
-    const result = parsePackageSpec("some-package");
-    expect(result.source.type).toBe("registry");
-    expect((result.source as { type: "registry"; name: string }).name).toBe("some-package");
+  // ---------------------------------------------------------------------------
+  // Registry packages
+  // ---------------------------------------------------------------------------
+
+  describe("registry", () => {
+    test("simple package name", () => {
+      const result = parsePackageSpec("lodash");
+      expect(result.source).toEqual({ type: "registry", name: "lodash" });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("package with version", () => {
+      const result = parsePackageSpec("lodash@^1.0.0");
+      expect(result.source).toEqual({
+        type: "registry",
+        name: "lodash@^1.0.0",
+      });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("scoped package", () => {
+      const result = parsePackageSpec("@org/code-review");
+      expect(result.source).toEqual({
+        type: "registry",
+        name: "@org/code-review",
+      });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("scoped package with version", () => {
+      const result = parsePackageSpec("@org/code-review@^2.0.0");
+      expect(result.source).toEqual({
+        type: "registry",
+        name: "@org/code-review@^2.0.0",
+      });
+      expect(result.warnings).toEqual([]);
+    });
   });
 
-  test('"some-package@^1.0.0" → registry source with version', () => {
-    const result = parsePackageSpec("some-package@^1.0.0");
-    expect(result.source.type).toBe("registry");
-    expect((result.source as { type: "registry"; name: string }).name).toBe("some-package@^1.0.0");
+  // ---------------------------------------------------------------------------
+  // File/local paths
+  // ---------------------------------------------------------------------------
+
+  describe("file", () => {
+    test("file: protocol", () => {
+      const result = parsePackageSpec("file:./local-pkg");
+      expect(result.source).toEqual({ type: "file", path: "./local-pkg" });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("file: absolute path", () => {
+      const result = parsePackageSpec("file:/absolute/path");
+      expect(result.source).toEqual({ type: "file", path: "/absolute/path" });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("relative path with ./", () => {
+      const result = parsePackageSpec("./local-pkg");
+      expect(result.source).toEqual({ type: "file", path: "./local-pkg" });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("relative path with ../", () => {
+      const result = parsePackageSpec("../sibling-pkg");
+      expect(result.source).toEqual({ type: "file", path: "../sibling-pkg" });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("absolute path", () => {
+      const result = parsePackageSpec("/absolute/path/to/pkg");
+      expect(result.source).toEqual({
+        type: "file",
+        path: "/absolute/path/to/pkg",
+      });
+      expect(result.warnings).toEqual([]);
+    });
   });
 
-  test('"@org/pkg" → registry source', () => {
-    const result = parsePackageSpec("@org/pkg");
-    expect(result.source.type).toBe("registry");
-    expect((result.source as { type: "registry"; name: string }).name).toBe("@org/pkg");
+  // ---------------------------------------------------------------------------
+  // Git sources
+  // ---------------------------------------------------------------------------
+
+  describe("git", () => {
+    test("github: protocol", () => {
+      const result = parsePackageSpec("github:org/repo");
+      expect(result.source).toEqual({
+        type: "git",
+        url: "github:org/repo",
+      });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("github: with ref", () => {
+      const result = parsePackageSpec("github:org/repo#v1.0.0");
+      expect(result.source).toEqual({
+        type: "git",
+        url: "github:org/repo",
+        ref: "v1.0.0",
+      });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("https URL", () => {
+      const result = parsePackageSpec("https://github.com/org/repo");
+      expect(result.source).toEqual({
+        type: "git",
+        url: "https://github.com/org/repo",
+      });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("https URL with ref", () => {
+      const result = parsePackageSpec("https://github.com/org/repo#main");
+      expect(result.source).toEqual({
+        type: "git",
+        url: "https://github.com/org/repo",
+        ref: "main",
+      });
+      expect(result.warnings).toEqual([]);
+    });
+
+    test("git+ssh URL", () => {
+      const result = parsePackageSpec("git+ssh://git@github.com/org/repo");
+      expect(result.source).toEqual({
+        type: "git",
+        url: "git+ssh://git@github.com/org/repo",
+      });
+      expect(result.warnings).toEqual([]);
+    });
   });
 
-  test('"@org/pkg@^2.0.0" → registry source with version', () => {
-    const result = parsePackageSpec("@org/pkg@^2.0.0");
-    expect(result.source.type).toBe("registry");
-    expect((result.source as { type: "registry"; name: string }).name).toBe("@org/pkg@^2.0.0");
-  });
+  // ---------------------------------------------------------------------------
+  // GitHub shorthand
+  // ---------------------------------------------------------------------------
 
-  test('"github:org/repo" → git source, no ref', () => {
-    const result = parsePackageSpec("github:org/repo");
-    expect(result.source.type).toBe("git");
-    const source = result.source as { type: "git"; url: string; ref?: string };
-    expect(source.url).toBe("github:org/repo");
-    expect(source.ref).toBeUndefined();
-  });
+  describe("GitHub shorthand", () => {
+    test("org/repo interpreted as GitHub", () => {
+      const result = parsePackageSpec("org/repo");
+      expect(result.source).toEqual({
+        type: "git",
+        url: "github:org/repo",
+      });
+      expect(result.warnings.length).toBe(1);
+      expect(result.warnings[0]).toContain("Interpreting");
+      expect(result.warnings[0]).toContain("GitHub repo");
+    });
 
-  test('"github:org/repo#v1.0.0" → git source with ref', () => {
-    const result = parsePackageSpec("github:org/repo#v1.0.0");
-    expect(result.source.type).toBe("git");
-    const source = result.source as { type: "git"; url: string; ref?: string };
-    expect(source.url).toBe("github:org/repo");
-    expect(source.ref).toBe("v1.0.0");
-  });
+    test("org/repo with ref", () => {
+      const result = parsePackageSpec("org/repo#v2.0.0");
+      expect(result.source).toEqual({
+        type: "git",
+        url: "github:org/repo",
+        ref: "v2.0.0",
+      });
+      expect(result.warnings.length).toBe(1);
+    });
 
-  test('"git+ssh://git@github.com:org/repo.git" → git source', () => {
-    const result = parsePackageSpec("git+ssh://git@github.com:org/repo.git");
-    expect(result.source.type).toBe("git");
-  });
-
-  test('"git+https://github.com/org/repo.git" → git source', () => {
-    const result = parsePackageSpec("git+https://github.com/org/repo.git");
-    expect(result.source.type).toBe("git");
-  });
-
-  test('"https://github.com/org/repo" → git source', () => {
-    const result = parsePackageSpec("https://github.com/org/repo");
-    expect(result.source.type).toBe("git");
-    const source = result.source as { type: "git"; url: string; ref?: string };
-    expect(source.url).toBe("https://github.com/org/repo");
-  });
-
-  test('"http://github.com/org/repo" → git source', () => {
-    const result = parsePackageSpec("http://github.com/org/repo");
-    expect(result.source.type).toBe("git");
-  });
-
-  test('"https://github.com/org/repo#v2.0.0" → git source with ref', () => {
-    const result = parsePackageSpec("https://github.com/org/repo#v2.0.0");
-    expect(result.source.type).toBe("git");
-    const source = result.source as { type: "git"; url: string; ref?: string };
-    expect(source.url).toBe("https://github.com/org/repo");
-    expect(source.ref).toBe("v2.0.0");
-  });
-
-  test('"git://github.com/org/repo.git" → git source', () => {
-    const result = parsePackageSpec("git://github.com/org/repo.git");
-    expect(result.source.type).toBe("git");
-  });
-
-  test('"file:../local-pkg" → file source', () => {
-    const result = parsePackageSpec("file:../local-pkg");
-    expect(result.source.type).toBe("file");
-    const source = result.source as { type: "file"; path: string };
-    expect(source.path).toBe("../local-pkg");
-  });
-
-  test('"org/repo" → git source with github: prefix and warnings', () => {
-    const result = parsePackageSpec("org/repo");
-    expect(result.source.type).toBe("git");
-    const source = result.source as { type: "git"; url: string; ref?: string };
-    expect(source.url).toBe("github:org/repo");
-    expect(result.warnings.length).toBeGreaterThan(0);
-  });
-
-  test('"org/repo#v1.0.0" → git source with ref and warnings', () => {
-    const result = parsePackageSpec("org/repo#v1.0.0");
-    expect(result.source.type).toBe("git");
-    const source = result.source as { type: "git"; url: string; ref?: string };
-    expect(source.ref).toBe("v1.0.0");
-    expect(result.warnings.length).toBeGreaterThan(0);
+    test("warning suggests scoped npm package", () => {
+      const result = parsePackageSpec("myorg/my-pkg");
+      expect(result.warnings[0]).toContain("@myorg/my-pkg");
+    });
   });
 });
 
-describe("packageNameFromSource", () => {
-  test('registry source "pkg@^1.0.0" → returns "pkg"', () => {
-    const source: PackageSource = { type: "registry", name: "pkg@^1.0.0" };
-    expect(packageNameFromSource(source)).toBe("pkg");
+// ---------------------------------------------------------------------------
+// getInstalledVersion
+// ---------------------------------------------------------------------------
+
+describe("getInstalledVersion", () => {
+  let dir: string;
+  let cleanup: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ dir, cleanup } = await createTempDir());
   });
 
-  test('registry source "@org/pkg@^1.0.0" → returns "@org/pkg"', () => {
-    const source: PackageSource = { type: "registry", name: "@org/pkg@^1.0.0" };
-    expect(packageNameFromSource(source)).toBe("@org/pkg");
+  afterEach(async () => {
+    await cleanup();
   });
 
-  test("git source → throws Error", () => {
-    const source: PackageSource = { type: "git", url: "github:org/repo" };
-    expect(() => packageNameFromSource(source)).toThrow(Error);
+  test("returns version from valid package.json", async () => {
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "test-pkg", version: "2.3.4" }),
+    );
+    const version = await getInstalledVersion(dir);
+    expect(version).toBe("2.3.4");
+  });
+
+  test("returns 'unknown' when version field is missing", async () => {
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "test-pkg" }),
+    );
+    const version = await getInstalledVersion(dir);
+    expect(version).toBe("unknown");
+  });
+
+  test("throws descriptive error when package.json does not exist", async () => {
+    const nonExistent = join(dir, "no-such-dir");
+    await expect(getInstalledVersion(nonExistent)).rejects.toThrow(
+      `Failed to read package.json from ${nonExistent}`,
+    );
+  });
+
+  test("throws descriptive error when package.json is corrupt", async () => {
+    await writeFile(join(dir, "package.json"), "not valid json {{");
+    await expect(getInstalledVersion(dir)).rejects.toThrow(
+      `Failed to read package.json from ${dir}`,
+    );
   });
 });

@@ -2,129 +2,131 @@ import { describe, test, expect } from "bun:test";
 import { parseManifest, ManifestError } from "../../src/workflows/manifest";
 
 describe("parseManifest", () => {
-  test("valid manifest with all fields parses correctly", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-      description: "A test workflow",
-      agents: [{ path: "agents/helper.md" }],
-      skills: [{ path: "skills/tool" }],
-      commands: [{ path: "commands/run.md" }],
+  // ---------------------------------------------------------------------------
+  // Valid manifests
+  // ---------------------------------------------------------------------------
+
+  test("parses full manifest", () => {
+    const result = parseManifest(
+      JSON.stringify({
+        agents: ["reviewer", "linter"],
+        commands: ["review"],
+        skills: ["analysis"],
+      }),
+    );
+    expect(result).toEqual({
+      agents: ["reviewer", "linter"],
+      commands: ["review"],
+      skills: ["analysis"],
     });
-
-    const result = parseManifest(input);
-
-    expect(result.name).toBe("my-workflow");
-    expect(result.description).toBe("A test workflow");
-    expect(result.agents).toEqual([{ path: "agents/helper.md" }]);
-    expect(result.skills).toEqual([{ path: "skills/tool" }]);
-    expect(result.commands).toEqual([{ path: "commands/run.md" }]);
   });
 
-  test("missing name throws ManifestError", () => {
-    const input = JSON.stringify({
-      description: "A test workflow",
-    });
-
-    expect(() => parseManifest(input)).toThrow(ManifestError);
+  test("defaults missing arrays to []", () => {
+    const result = parseManifest("{}");
+    expect(result).toEqual({ agents: [], commands: [], skills: [] });
   });
 
-  test("empty name (whitespace only) throws ManifestError", () => {
-    const input = JSON.stringify({
-      name: "   ",
-      description: "A test workflow",
+  test("handles partial manifest (agents only)", () => {
+    const result = parseManifest(JSON.stringify({ agents: ["reviewer"] }));
+    expect(result).toEqual({
+      agents: ["reviewer"],
+      commands: [],
+      skills: [],
     });
-
-    expect(() => parseManifest(input)).toThrow(ManifestError);
   });
 
-  test("missing description throws ManifestError", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-    });
-
-    expect(() => parseManifest(input)).toThrow(ManifestError);
+  test("handles null fields as missing", () => {
+    const result = parseManifest(
+      JSON.stringify({ agents: null, commands: null, skills: null }),
+    );
+    expect(result).toEqual({ agents: [], commands: [], skills: [] });
   });
 
-  test("missing agents/skills/commands arrays defaults to empty arrays", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-      description: "A test workflow",
-    });
-
-    const result = parseManifest(input);
-
-    expect(result.agents).toEqual([]);
-    expect(result.skills).toEqual([]);
-    expect(result.commands).toEqual([]);
+  test("handles empty arrays", () => {
+    const result = parseManifest(
+      JSON.stringify({ agents: [], commands: [], skills: [] }),
+    );
+    expect(result).toEqual({ agents: [], commands: [], skills: [] });
   });
 
-  test("agent path without .md extension throws ManifestError", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-      description: "A test workflow",
-      agents: [{ path: "agents/helper" }],
-    });
+  // ---------------------------------------------------------------------------
+  // Invalid JSON
+  // ---------------------------------------------------------------------------
 
-    expect(() => parseManifest(input)).toThrow(ManifestError);
+  test("throws ManifestError on invalid JSON", () => {
+    expect(() => parseManifest("not json")).toThrow(ManifestError);
+    expect(() => parseManifest("not json")).toThrow("Invalid JSON");
   });
 
-  test("command path without .md extension throws ManifestError", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-      description: "A test workflow",
-      commands: [{ path: "commands/run.txt" }],
-    });
-
-    expect(() => parseManifest(input)).toThrow(ManifestError);
+  test("throws ManifestError when root is not an object", () => {
+    expect(() => parseManifest('"string"')).toThrow("must be a JSON object");
+    expect(() => parseManifest("[1,2]")).toThrow("must be a JSON object");
+    expect(() => parseManifest("42")).toThrow("must be a JSON object");
+    expect(() => parseManifest("null")).toThrow("must be a JSON object");
   });
 
-  test("skill path ending in .md throws ManifestError", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-      description: "A test workflow",
-      skills: [{ path: "skills/tool.md" }],
-    });
+  // ---------------------------------------------------------------------------
+  // Invalid field types
+  // ---------------------------------------------------------------------------
 
-    expect(() => parseManifest(input)).toThrow(ManifestError);
+  test("throws when field is not an array", () => {
+    expect(() =>
+      parseManifest(JSON.stringify({ agents: "reviewer" })),
+    ).toThrow("'agents' must be an array");
+
+    expect(() =>
+      parseManifest(JSON.stringify({ commands: 42 })),
+    ).toThrow("'commands' must be an array");
+
+    expect(() =>
+      parseManifest(JSON.stringify({ skills: { a: 1 } })),
+    ).toThrow("'skills' must be an array");
   });
 
-  test("absolute path throws ManifestError", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-      description: "A test workflow",
-      agents: [{ path: "/etc/passwd.md" }],
-    });
+  test("throws when array contains non-string", () => {
+    expect(() =>
+      parseManifest(JSON.stringify({ agents: [42] })),
+    ).toThrow("agents[0] must be a string");
 
-    expect(() => parseManifest(input)).toThrow(ManifestError);
+    expect(() =>
+      parseManifest(JSON.stringify({ commands: ["ok", null] })),
+    ).toThrow("commands[1] must be a string");
   });
 
-  test("path traversal throws ManifestError", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-      description: "A test workflow",
-      agents: [{ path: "../../../etc/passwd.md" }],
-    });
+  // ---------------------------------------------------------------------------
+  // Empty strings
+  // ---------------------------------------------------------------------------
 
-    expect(() => parseManifest(input)).toThrow(ManifestError);
+  test("throws on empty string in array", () => {
+    expect(() =>
+      parseManifest(JSON.stringify({ agents: [""] })),
+    ).toThrow("agents[0] must not be empty");
+
+    expect(() =>
+      parseManifest(JSON.stringify({ agents: ["reviewer", ""] })),
+    ).toThrow("agents[1] must not be empty");
   });
 
-  test("non-array agents field throws ManifestError", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-      description: "A test workflow",
-      agents: "not-an-array",
-    });
+  // ---------------------------------------------------------------------------
+  // Duplicates
+  // ---------------------------------------------------------------------------
 
-    expect(() => parseManifest(input)).toThrow(ManifestError);
+  test("throws on duplicate name within a category", () => {
+    expect(() =>
+      parseManifest(JSON.stringify({ agents: ["reviewer", "reviewer"] })),
+    ).toThrow('agents contains duplicate name: "reviewer"');
   });
 
-  test("array item without path field throws ManifestError", () => {
-    const input = JSON.stringify({
-      name: "my-workflow",
-      description: "A test workflow",
-      agents: [{ name: "missing-path" }],
-    });
-
-    expect(() => parseManifest(input)).toThrow(ManifestError);
+  test("allows same name across different categories", () => {
+    const result = parseManifest(
+      JSON.stringify({
+        agents: ["review"],
+        commands: ["review"],
+        skills: ["review"],
+      }),
+    );
+    expect(result.agents).toEqual(["review"]);
+    expect(result.commands).toEqual(["review"]);
+    expect(result.skills).toEqual(["review"]);
   });
 });
