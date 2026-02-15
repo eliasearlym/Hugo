@@ -233,6 +233,56 @@ describe("health", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Skill sync awareness
+  // -----------------------------------------------------------------------
+
+  test("does not report Hugo-synced skills as file overrides", async () => {
+    await install({ projectDir, spec: `file:${fixtureDir("basic-workflow")}` });
+
+    // basic-workflow declares skill "analysis" and install syncs it to
+    // .opencode/skills/analysis/SKILL.md. This should NOT be reported as
+    // an "overridden-by-file" warning — Hugo put it there.
+    const result = await health({ projectDir });
+
+    const report = result.reports[0];
+    const fileWarnings = report.warnings.filter(
+      (w) => w.type === "overridden-by-file" && w.entity === "skill",
+    );
+    expect(fileWarnings.length).toBe(0);
+  });
+
+  test("reports user-created skill file as override when no sync state", async () => {
+    await install({ projectDir, spec: `file:${fixtureDir("agents-only")}` });
+
+    // Manually create a skill file that matches a hypothetical skill name.
+    // agents-only has no skills, so this tests that non-synced skills ARE reported.
+    // Use a different workflow that declares skills but was installed before the feature.
+    // Easier: just install basic-workflow and manually remove its sync state.
+    const { writeConfig: wc, readConfig: rc, getWorkflow: gw } = await import(
+      "../../src/workflows/config"
+    );
+
+    await install({ projectDir, spec: `file:${fixtureDir("basic-workflow")}` });
+    const config = await rc(projectDir);
+    const entry = gw(config, "basic-workflow");
+    if (entry) {
+      delete (entry as Record<string, unknown>).sync;
+      await wc(projectDir, config);
+    }
+
+    // Now health should report the synced skill file as an override
+    // since there's no sync state to suppress it
+    const result = await health({ projectDir, name: "basic-workflow" });
+
+    const report = result.reports[0];
+    const fileWarnings = report.warnings.filter(
+      (w) => w.type === "overridden-by-file" && w.entity === "skill",
+    );
+    expect(fileWarnings.length).toBe(1);
+    expect(fileWarnings[0].name).toBe("analysis");
+  });
+
+  // -----------------------------------------------------------------------
   // Edge cases
   // -----------------------------------------------------------------------
 

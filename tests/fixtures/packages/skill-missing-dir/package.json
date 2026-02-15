@@ -1,0 +1,5 @@
+{
+  "name": "skill-missing-dir",
+  "version": "1.0.0",
+  "description": "Test fixture — declares skill but directory is missing"
+}

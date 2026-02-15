@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import { createTempDir, fixtureDir, readConfig } from "../helpers";
+import { createTempDir, fixtureDir, readConfig, fileExists } from "../helpers";
 import { install } from "../../src/commands/install";
 import { enable } from "../../src/commands/enable";
 import {
@@ -188,6 +188,60 @@ describe("enable", () => {
     );
     expect(fileWarnings.length).toBe(1);
     expect(fileWarnings[0].name).toBe("reviewer");
+  });
+
+  // -----------------------------------------------------------------------
+  // Skill syncing
+  // -----------------------------------------------------------------------
+
+  test("syncs skill directories on enable", async () => {
+    await installAndDisable("basic-workflow");
+
+    // After install+disable, skill was synced during install.
+    // The installAndDisable helper bypasses our disable() so skills remain.
+    // Clear them to test enable's sync.
+    const { rm } = await import("node:fs/promises");
+    const skillDir = join(projectDir, ".opencode", "skills", "analysis");
+    await rm(skillDir, { recursive: true, force: true });
+
+    // Also clear sync state from the entry to simulate a clean slate
+    const cfg = await readCfg(projectDir);
+    const hugo = cfg.hugo as Record<string, Record<string, Record<string, unknown>>>;
+    delete hugo.workflows["basic-workflow"].sync;
+    await writeConfig(projectDir, cfg);
+
+    const result = await enable({ projectDir, names: ["basic-workflow"] });
+
+    // Skill should be synced
+    expect(await fileExists(skillDir)).toBe(true);
+    expect(await fileExists(join(skillDir, "SKILL.md"))).toBe(true);
+
+    // Sync state should be recorded
+    const finalConfig = await readCfg(projectDir);
+    const entry = (
+      (finalConfig.hugo as Record<string, unknown>).workflows as Record<
+        string,
+        Record<string, unknown>
+      >
+    )["basic-workflow"];
+    expect(entry.sync).toEqual({ skills: { analysis: { status: "synced" } } });
+
+    // Returned entry should also reflect sync state (1.9 fix)
+    expect(result.workflows[0].entry.sync).toEqual({
+      skills: { analysis: { status: "synced" } },
+    });
+    expect(result.workflows[0].syncWarnings).toEqual([]);
+  });
+
+  test("returns syncWarnings when skill already exists on enable", async () => {
+    await installAndDisable("basic-workflow");
+    // Skill directory remains from install (installAndDisable bypasses our disable())
+
+    const result = await enable({ projectDir, names: ["basic-workflow"] });
+
+    // Should be skipped since directory already exists
+    expect(result.workflows[0].syncWarnings.length).toBe(1);
+    expect(result.workflows[0].syncWarnings[0]).toContain("already exists");
   });
 
   // -----------------------------------------------------------------------

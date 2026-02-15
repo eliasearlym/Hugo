@@ -3,9 +3,13 @@ import {
   writeConfig,
   addPlugin,
   hasPlugin,
+  setWorkflow,
   resolveWorkflowTargets,
 } from "../workflows/config";
+import { getPackageDir } from "../workflows/bun";
 import { detectCollisions } from "../workflows/collisions";
+import { syncSkills } from "../workflows/sync";
+import { getOpencodeDir } from "../workflows/utils";
 import type { CollisionWarning, WorkflowEntry } from "../workflows/types";
 
 // ---------------------------------------------------------------------------
@@ -23,6 +27,7 @@ export type EnabledWorkflow = {
   entry: WorkflowEntry;
   alreadyEnabled: boolean;
   warnings: CollisionWarning[];
+  syncWarnings: string[];
 };
 
 export type EnableResult = {
@@ -42,6 +47,8 @@ export async function enable(options: EnableOptions): Promise<EnableResult> {
   const results: EnabledWorkflow[] = [];
   let configChanged = false;
 
+  const opencodeDir = getOpencodeDir(projectDir);
+
   for (const { name, entry } of targets) {
     if (hasPlugin(config, entry.package)) {
       results.push({
@@ -49,6 +56,7 @@ export async function enable(options: EnableOptions): Promise<EnableResult> {
         entry,
         alreadyEnabled: true,
         warnings: [],
+        syncWarnings: [],
       });
       continue;
     }
@@ -58,16 +66,32 @@ export async function enable(options: EnableOptions): Promise<EnableResult> {
       { agents: entry.agents, commands: entry.commands, skills: entry.skills },
       config,
       projectDir,
+      "enabled-only",
+      entry.sync?.skills,
     );
 
     addPlugin(config, entry.package);
+
+    const packageDir = getPackageDir(opencodeDir, entry.package);
+    const syncResult = await syncSkills(opencodeDir, packageDir, entry.skills);
+
+    let finalEntry = entry;
+    if (Object.keys(syncResult.entries).length > 0) {
+      finalEntry = {
+        ...entry,
+        sync: { skills: syncResult.entries },
+      };
+      setWorkflow(config, name, finalEntry);
+    }
+
     configChanged = true;
 
     results.push({
       workflowName: name,
-      entry,
+      entry: finalEntry,
       alreadyEnabled: false,
       warnings,
+      syncWarnings: syncResult.warnings,
     });
   }
 

@@ -3,8 +3,11 @@ import {
   writeConfig,
   removePlugin,
   hasPlugin,
+  setWorkflow,
   resolveWorkflowTargets,
 } from "../workflows/config";
+import { unsyncSkills } from "../workflows/sync";
+import { getOpencodeDir } from "../workflows/utils";
 import type { WorkflowEntry } from "../workflows/types";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +24,7 @@ export type DisabledWorkflow = {
   workflowName: string;
   entry: WorkflowEntry;
   alreadyDisabled: boolean;
+  syncWarnings: string[];
 };
 
 export type DisableResult = {
@@ -37,6 +41,7 @@ export async function disable(options: DisableOptions): Promise<DisableResult> {
 
   const config = await readConfig(projectDir);
   const targets = resolveWorkflowTargets(config, names, all);
+  const opencodeDir = getOpencodeDir(projectDir);
   const results: DisabledWorkflow[] = [];
   let configChanged = false;
 
@@ -46,17 +51,28 @@ export async function disable(options: DisableOptions): Promise<DisableResult> {
         workflowName: name,
         entry,
         alreadyDisabled: true,
+        syncWarnings: [],
       });
       continue;
     }
 
     removePlugin(config, entry.package);
+
+    const unsyncResult = await unsyncSkills(opencodeDir, entry.skills, entry.sync?.skills);
+
+    if (entry.sync) {
+      const updatedEntry: WorkflowEntry = { ...entry };
+      delete updatedEntry.sync;
+      setWorkflow(config, name, updatedEntry);
+    }
+
     configChanged = true;
 
     results.push({
       workflowName: name,
       entry,
       alreadyDisabled: false,
+      syncWarnings: unsyncResult.warnings,
     });
   }
 

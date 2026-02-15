@@ -215,6 +215,12 @@ export async function installPackage(
 
   // For git/file sources, snapshot deps before install and diff after
   // to discover the package name (which isn't known upfront).
+  //
+  // Edge cases like transitive deps, monorepo multi-adds, or side-effect
+  // version bumps are not realistic here: .opencode/package.json only
+  // contains Hugo-managed direct dependencies, and bun adds exactly one
+  // entry per `bun add` invocation. The fallback chain below is defensive
+  // but all practical cases resolve in the first two checks.
   const depsBefore = await readDependencies(opencodeDir);
   await addDependency(opencodeDir, spec);
   const depsAfter = await readDependencies(opencodeDir);
@@ -224,7 +230,8 @@ export async function installPackage(
   );
 
   if (newPackages.length === 0) {
-    // No new deps — might be a reinstall with a changed version
+    // No new deps — reinstall. Check if the dep value changed (e.g. git
+    // source with a different ref on --force reinstall).
     const changedPackages = Object.keys(depsAfter).filter(
       (name) => depsBefore[name] !== depsAfter[name],
     );
@@ -237,7 +244,8 @@ export async function installPackage(
       };
     }
 
-    // Exact reinstall (same version) — match by source path/URL in dep value
+    // Exact reinstall (same version, same ref) — dep value is unchanged.
+    // Match by source path/URL substring in the dep value.
     if (source.type === "file") {
       const matchingDeps = Object.entries(depsAfter).filter(([, value]) =>
         value.includes(source.path),
@@ -273,6 +281,9 @@ export async function installPackage(
   }
 
   if (newPackages.length > 1) {
+    // Defensive: bun add should only add one direct dep. This would require
+    // a monorepo or workspace setup that adds multiple entries, which isn't
+    // realistic in .opencode/'s isolated context.
     throw new Error(
       `Installing "${spec}" added multiple packages: ${newPackages.join(", ")}. ` +
         "Cannot determine which is the workflow package.",

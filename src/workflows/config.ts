@@ -1,10 +1,30 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parse as parseJsonc } from "jsonc-parser";
+import {
+  parse as parseJsonc,
+  modify as modifyJsonc,
+  applyEdits,
+  type FormattingOptions,
+} from "jsonc-parser";
 import type { WorkflowEntry } from "./types";
 import { isNodeError } from "./utils";
 
 const CONFIG_FILENAME = "opencode.json";
+
+const FORMATTING_OPTIONS: FormattingOptions = {
+  tabSize: 2,
+  insertSpaces: true,
+  eol: "\n",
+};
+
+/**
+ * Holds the raw JSONC text from the last readConfig call, keyed by projectDir.
+ * Used by writeConfig to apply targeted edits that preserve comments.
+ *
+ * This is a module-level cache rather than a return-value change to avoid
+ * altering the readConfig/writeConfig API that every command depends on.
+ */
+const rawConfigCache = new Map<string, string>();
 
 // ---------------------------------------------------------------------------
 // Read / Write
@@ -14,6 +34,9 @@ const CONFIG_FILENAME = "opencode.json";
  * Read opencode.json from projectDir using jsonc-parser (supports comments).
  * Returns {} if the file doesn't exist.
  * Throws on permission errors or corrupt content that isn't valid JSONC.
+ *
+ * Caches the raw JSONC text so that writeConfig can apply targeted edits
+ * that preserve user comments.
  */
 export async function readConfig(
   projectDir: string,
@@ -24,6 +47,7 @@ export async function readConfig(
     raw = await readFile(configPath, "utf-8");
   } catch (err: unknown) {
     if (isNodeError(err) && err.code === "ENOENT") {
+      rawConfigCache.delete(projectDir);
       return {};
     }
     throw err;
@@ -40,26 +64,91 @@ export async function readConfig(
     throw new Error(`${CONFIG_FILENAME} must contain a JSON object`);
   }
 
+  rawConfigCache.set(projectDir, raw);
   return parsed as Record<string, unknown>;
 }
 
 /**
  * Write config to opencode.json. Creates the file if it doesn't exist.
- * Writes standard JSON (comments are stripped — known limitation).
+ *
+ * When a cached raw JSONC text exists (from a prior readConfig call), this
+ * function applies targeted edits using jsonc-parser's modify/applyEdits API
+ * to preserve user comments and formatting. Only the `plugin` and `hugo` keys
+ * (the regions Hugo manages) are updated.
+ *
+ * Falls back to full JSON.stringify when no cached text exists (e.g. the file
+ * was created by Hugo from scratch).
  *
  * **Known limitation — no concurrent-access protection.**
  * All mutating commands follow a readConfig() → modify → writeConfig() pattern.
  * If another process (another Hugo instance, OpenCode, or a manual edit) modifies
  * opencode.json between our read and write, those changes are silently overwritten.
- * A full fix would require file locking (e.g. advisory locks via flock) or an
- * atomic read-modify-write with mtime-based compare-and-swap.
+ *
+ * Why this is acceptable today:
+ * - Hugo is a user-driven CLI — concurrent invocations don't happen in practice.
+ * - opencode.json is small (<4KB), so writeFile is effectively atomic (single
+ *   write syscall). Readers won't see partial content.
+ * - The longest race window is `hugo install` for registry sources, where
+ *   readConfig happens before `bun add` and writeConfig happens after manifest
+ *   parsing + collision detection + skill syncing.
+ *
+ * If Hugo gains a daemon mode, a watch loop, or programmatic composition of
+ * commands, revisit with advisory file locking or mtime-based compare-and-swap.
  */
 export async function writeConfig(
   projectDir: string,
   config: Record<string, unknown>,
 ): Promise<void> {
   const configPath = join(projectDir, CONFIG_FILENAME);
-  await writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+  const cachedRaw = rawConfigCache.get(projectDir);
+
+  let output: string;
+
+  if (cachedRaw !== undefined) {
+    // Apply targeted edits to preserve comments and formatting.
+    // Compare the new config against the cached parse to find what changed,
+    // then apply only those changes to the raw JSONC text.
+    let text = cachedRaw;
+    const oldConfig = parseJsonc(cachedRaw) as Record<string, unknown> ?? {};
+
+    // Collect all top-level keys from both old and new configs.
+    const allKeys = new Set([
+      ...Object.keys(oldConfig),
+      ...Object.keys(config),
+    ]);
+
+    for (const key of allKeys) {
+      const oldVal = oldConfig[key];
+      const newVal = config[key];
+
+      // Key was removed from config.
+      if (!(key in config)) {
+        const edits = modifyJsonc(text, [key], undefined, {
+          formattingOptions: FORMATTING_OPTIONS,
+        });
+        text = applyEdits(text, edits);
+        continue;
+      }
+
+      // Key is new or value changed — apply the edit.
+      if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+        const edits = modifyJsonc(text, [key], newVal, {
+          formattingOptions: FORMATTING_OPTIONS,
+        });
+        text = applyEdits(text, edits);
+      }
+    }
+
+    output = text;
+  } else {
+    output = JSON.stringify(config, null, 2) + "\n";
+  }
+
+  // Update the cache so that consecutive writes within the same process
+  // (e.g. update command writing multiple workflows) stay consistent.
+  rawConfigCache.set(projectDir, output);
+
+  await writeFile(configPath, output, "utf-8");
 }
 
 // ---------------------------------------------------------------------------
@@ -247,5 +336,3 @@ export function resolveWorkflowTargets(
     return { name, entry };
   });
 }
-
-

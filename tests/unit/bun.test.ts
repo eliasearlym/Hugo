@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
 import { writeFile, mkdir } from "node:fs/promises";
-import { parsePackageSpec, getInstalledVersion } from "../../src/workflows/bun";
+import { parsePackageSpec, getInstalledVersion, packageNameFromSource } from "../../src/workflows/bun";
 import { createTempDir } from "../helpers";
 
 describe("parsePackageSpec", () => {
@@ -166,6 +166,32 @@ describe("parsePackageSpec", () => {
       const result = parsePackageSpec("myorg/my-pkg");
       expect(result.warnings[0]).toContain("@myorg/my-pkg");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// packageNameFromSource
+// ---------------------------------------------------------------------------
+
+describe("packageNameFromSource", () => {
+  test("returns stripped name for registry source", () => {
+    expect(packageNameFromSource({ type: "registry", name: "@org/pkg@^1.0.0" })).toBe("@org/pkg");
+  });
+
+  test("returns name as-is for registry source without version", () => {
+    expect(packageNameFromSource({ type: "registry", name: "lodash" })).toBe("lodash");
+  });
+
+  test("throws for git source", () => {
+    expect(() => packageNameFromSource({ type: "git", url: "github:org/repo" })).toThrow(
+      "Cannot derive package name from git/file source",
+    );
+  });
+
+  test("throws for file source", () => {
+    expect(() => packageNameFromSource({ type: "file", path: "./local-pkg" })).toThrow(
+      "Cannot derive package name from git/file source",
+    );
   });
 });
 

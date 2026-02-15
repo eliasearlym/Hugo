@@ -5,10 +5,14 @@ import {
   removePlugin,
   getWorkflows,
   getWorkflow,
+  setWorkflow,
   hasPlugin,
 } from "../workflows/config";
+import { getPackageDir } from "../workflows/bun";
 import { detectCollisions } from "../workflows/collisions";
-import type { CollisionWarning, WorkflowEntry } from "../workflows/types";
+import { syncSkills, unsyncSkills } from "../workflows/sync";
+import { getOpencodeDir } from "../workflows/utils";
+import type { CollisionWarning, SkillSyncState, WorkflowEntry } from "../workflows/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,6 +31,7 @@ export type SwitchResult = {
   /** True if no changes were needed (already in the desired state). */
   alreadyActive: boolean;
   warnings: CollisionWarning[];
+  syncWarnings: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -89,26 +94,76 @@ export async function switchWorkflows(
       disabled: [],
       alreadyActive: true,
       warnings: [],
+      syncWarnings: [],
     };
   }
 
-  for (const { entry } of toDisable) {
-    removePlugin(config, entry.package);
-  }
-
+  const opencodeDir = getOpencodeDir(projectDir);
+  const allSyncWarnings: string[] = [];
   const allWarnings: CollisionWarning[] = [];
-  for (const { workflowName, entry } of toEnable) {
-    const warnings = await detectCollisions(
-      workflowName,
-      { agents: entry.agents, commands: entry.commands, skills: entry.skills },
-      config,
-      projectDir,
-    );
-    allWarnings.push(...warnings);
-    addPlugin(config, entry.package);
-  }
 
-  await writeConfig(projectDir, config);
+  // Track completed enables for rollback — if anything fails after
+  // filesystem mutations start, we restore the pre-switch state.
+  const enabledOps: Array<{
+    entry: WorkflowEntry;
+    syncEntries: SkillSyncState;
+  }> = [];
+
+  try {
+    // Phase 1: Disable — unsync skills first (frees skill directories
+    // so enabled workflows can copy their versions)
+    for (const { workflowName, entry } of toDisable) {
+      removePlugin(config, entry.package);
+
+      const unsyncResult = await unsyncSkills(opencodeDir, entry.skills, entry.sync?.skills);
+      allSyncWarnings.push(...unsyncResult.warnings);
+
+      if (entry.sync) {
+        const updatedEntry: WorkflowEntry = { ...entry };
+        delete updatedEntry.sync;
+        setWorkflow(config, workflowName, updatedEntry);
+      }
+    }
+
+    // Phase 2: Enable — detect collisions, sync skills
+    for (const { workflowName, entry } of toEnable) {
+      const warnings = await detectCollisions(
+        workflowName,
+        { agents: entry.agents, commands: entry.commands, skills: entry.skills },
+        config,
+        projectDir,
+      );
+      allWarnings.push(...warnings);
+      addPlugin(config, entry.package);
+
+      const packageDir = getPackageDir(opencodeDir, entry.package);
+      const syncResult = await syncSkills(opencodeDir, packageDir, entry.skills);
+      allSyncWarnings.push(...syncResult.warnings);
+      enabledOps.push({ entry, syncEntries: syncResult.entries });
+
+      if (Object.keys(syncResult.entries).length > 0) {
+        const updatedEntry: WorkflowEntry = {
+          ...entry,
+          sync: { skills: syncResult.entries },
+        };
+        setWorkflow(config, workflowName, updatedEntry);
+      }
+    }
+
+    await writeConfig(projectDir, config);
+  } catch (err) {
+    // Rollback: restore filesystem to pre-switch state.
+    // syncSkills/unsyncSkills handle errors internally (return warnings,
+    // never throw), so these rollback calls are safe.
+    for (const op of [...enabledOps].reverse()) {
+      await unsyncSkills(opencodeDir, op.entry.skills, op.syncEntries);
+    }
+    for (const { entry } of [...toDisable].reverse()) {
+      const packageDir = getPackageDir(opencodeDir, entry.package);
+      await syncSkills(opencodeDir, packageDir, entry.skills);
+    }
+    throw err;
+  }
 
   return {
     enabled: targetEntries.map(({ name, entry }) => ({
@@ -118,5 +173,6 @@ export async function switchWorkflows(
     disabled: toDisable,
     alreadyActive: false,
     warnings: allWarnings,
+    syncWarnings: allSyncWarnings,
   };
 }

@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import { createTempDir, fixtureDir, runCLI } from "../helpers";
+import { createTempDir, fixtureDir, runCLI, stageFixture, swapFixtureVersion } from "../helpers";
 
 let projectDir: string;
 let cleanup: () => Promise<void>;
@@ -315,6 +315,70 @@ describe("cli: switch", () => {
     expect(exitCode).toBe(1);
     expect(stderr).toContain("missing workflow name");
     expect(stderr).toContain("Usage: hugo switch <name...>");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// update
+// ---------------------------------------------------------------------------
+
+describe("cli: update", () => {
+  test("reports all up to date (bulk)", async () => {
+    const staged = await stageFixture("basic-workflow");
+    try {
+      await hugo("install", staged.spec);
+
+      const { stdout, exitCode } = await hugo("update");
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("All workflows up to date.");
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  test("reports single target already up to date", async () => {
+    const staged = await stageFixture("basic-workflow");
+    try {
+      await hugo("install", staged.spec);
+
+      const { stdout, exitCode } = await hugo("update", "basic-workflow");
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain('"basic-workflow" already up to date.');
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  test("prints version bump with structural changes", async () => {
+    const staged = await stageFixture("basic-workflow");
+    try {
+      await hugo("install", staged.spec);
+      await swapFixtureVersion(staged.dir, "basic-workflow-v2");
+
+      const { stdout, exitCode } = await hugo("update", "basic-workflow");
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("Updated");
+      expect(stdout).toContain("basic-workflow");
+      expect(stdout).toContain("v1.0.0");
+      expect(stdout).toContain("v2.0.0");
+      expect(stdout).toContain("\u2192"); // arrow
+      expect(stdout).toContain("added command: lint");
+      expect(stdout).toContain("removed command: review");
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  test("errors when workflow not installed", async () => {
+    const { stderr, exitCode } = await hugo("update", "nonexistent");
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain('Workflow "nonexistent" is not installed');
+  });
+
+  test("errors when no workflows installed (bulk)", async () => {
+    const { stderr, exitCode } = await hugo("update");
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("No workflows installed");
   });
 });
 

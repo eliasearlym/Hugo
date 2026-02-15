@@ -147,6 +147,9 @@ async function handleInstall(
   for (const line of formatWarnings(result.warnings)) {
     console.log(line);
   }
+  for (const w of result.syncWarnings) {
+    console.log(`  \u26A0 ${w}`);
+  }
 
   const counts = formatCount(result.agents, result.commands, result.skills, result.mcps);
   const countsSuffix = counts ? ` (${counts})` : "";
@@ -167,6 +170,9 @@ async function handleRemove(args: string[]): Promise<void> {
 
   if (result.bunWarning) {
     console.log(`  Warning: ${result.bunWarning}`);
+  }
+  for (const w of result.syncWarnings) {
+    console.log(`  \u26A0 ${w}`);
   }
 
   const counts = formatCount(result.agents, result.commands, result.skills, result.mcps);
@@ -243,6 +249,9 @@ async function handleEnable(
     for (const line of formatWarnings(w.warnings)) {
       console.log(line);
     }
+    for (const sw of w.syncWarnings) {
+      console.log(`  \u26A0 ${sw}`);
+    }
     const counts = formatCount(w.entry.agents, w.entry.commands, w.entry.skills, w.entry.mcps);
     const countsSuffix = counts ? ` (${counts})` : "";
     console.log(`Enabled "${w.workflowName}"${countsSuffix}`);
@@ -274,6 +283,9 @@ async function handleDisable(
       console.log(`"${w.workflowName}" is already disabled.`);
       continue;
     }
+    for (const sw of w.syncWarnings) {
+      console.log(`  \u26A0 ${sw}`);
+    }
     console.log(`Disabled "${w.workflowName}"`);
   }
 }
@@ -296,6 +308,9 @@ async function handleSwitch(args: string[]): Promise<void> {
 
   for (const line of formatWarnings(result.warnings)) {
     console.log(line);
+  }
+  for (const w of result.syncWarnings) {
+    console.log(`  \u26A0 ${w}`);
   }
 
   const enabledNames = result.enabled.map((w) => `"${w.workflowName}"`);

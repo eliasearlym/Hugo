@@ -71,23 +71,26 @@ export async function health(options: HealthOptions): Promise<HealthResult> {
     crossScope = "enabled-only";
   }
 
-  const reports: HealthReport[] = [];
+  // Collision checks are independent (read-only against the same config),
+  // so run them in parallel across all target workflows.
+  const reports = await Promise.all(
+    targets.map(async (target) => {
+      const warnings = await detectCollisions(
+        target.name,
+        { agents: target.entry.agents, commands: target.entry.commands, skills: target.entry.skills },
+        config,
+        projectDir,
+        crossScope,
+        target.entry.sync?.skills,
+      );
 
-  for (const target of targets) {
-    const warnings = await detectCollisions(
-      target.name,
-      { agents: target.entry.agents, commands: target.entry.commands, skills: target.entry.skills },
-      config,
-      projectDir,
-      crossScope,
-    );
-
-    reports.push({
-      workflow: target.name,
-      enabled: target.enabled,
-      warnings,
-    });
-  }
+      return {
+        workflow: target.name,
+        enabled: target.enabled,
+        warnings,
+      };
+    }),
+  );
 
   return { reports };
 }

@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import { createTempDir, fixtureDir } from "../helpers";
+import { createTempDir, fixtureDir, fileExists } from "../helpers";
 import { install } from "../../src/commands/install";
 import { switchWorkflows } from "../../src/commands/switch";
 import { readConfig, hasPlugin } from "../../src/workflows/config";
@@ -127,6 +127,44 @@ describe("switch", () => {
     config = await readConfig(projectDir);
     expect(hasPlugin(config, "basic-workflow")).toBe(true);
     expect(hasPlugin(config, "agents-only")).toBe(false);
+  });
+
+  // -----------------------------------------------------------------------
+  // Skill syncing
+  // -----------------------------------------------------------------------
+
+  test("unsyncs disabled workflow skills and syncs enabled workflow skills", async () => {
+    await install({ projectDir, spec: `file:${fixtureDir("basic-workflow")}` });
+    await install({ projectDir, spec: `file:${fixtureDir("agents-only")}` });
+
+    // basic-workflow has skill "analysis" — should be synced after install
+    const skillDir = join(projectDir, ".opencode", "skills", "analysis");
+    expect(await fileExists(skillDir)).toBe(true);
+
+    // Switch to agents-only (no skills) — basic-workflow gets disabled
+    const result = await switchWorkflows({
+      projectDir,
+      names: ["agents-only"],
+    });
+
+    // basic-workflow's synced skill should be removed
+    expect(await fileExists(skillDir)).toBe(false);
+    expect(result.syncWarnings).toEqual([]);
+  });
+
+  test("syncs skills when enabling a disabled workflow via switch", async () => {
+    await install({ projectDir, spec: `file:${fixtureDir("basic-workflow")}` });
+    await install({ projectDir, spec: `file:${fixtureDir("agents-only")}` });
+
+    // Switch to agents-only first — removes basic-workflow's skills
+    await switchWorkflows({ projectDir, names: ["agents-only"] });
+    const skillDir = join(projectDir, ".opencode", "skills", "analysis");
+    expect(await fileExists(skillDir)).toBe(false);
+
+    // Switch back to basic-workflow — should re-sync skills
+    await switchWorkflows({ projectDir, names: ["basic-workflow"] });
+    expect(await fileExists(skillDir)).toBe(true);
+    expect(await fileExists(join(skillDir, "SKILL.md"))).toBe(true);
   });
 
   // -----------------------------------------------------------------------

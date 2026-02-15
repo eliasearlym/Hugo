@@ -27,6 +27,22 @@ export type WorkflowManifest = {
 };
 
 /**
+ * Sync status for a single skill directory.
+ *
+ * - "synced": Hugo copied this skill directory. Safe to remove on disable/remove,
+ *   and safe to replace on update.
+ * - "skipped": A skill directory already existed at the destination. Hugo didn't touch it.
+ */
+export type SkillSyncEntry = {
+  status: "synced" | "skipped";
+};
+
+/**
+ * Per-skill sync state. Keys are skill names, values are sync entries.
+ */
+export type SkillSyncState = Record<string, SkillSyncEntry>;
+
+/**
  * Stored in opencode.json under hugo.workflows.<name>.
  * Cached metadata — refreshed on install and update.
  */
@@ -37,6 +53,9 @@ export type WorkflowEntry = {
   commands: string[];
   skills: string[];
   mcps: string[];
+  sync?: {
+    skills: SkillSyncState;
+  };
 };
 
 /**

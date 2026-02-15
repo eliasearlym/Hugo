@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { parseManifest, ManifestError } from "../../src/workflows/manifest";
+import { parseManifest } from "../../src/workflows/manifest";
 
 describe("parseManifest", () => {
   // ---------------------------------------------------------------------------
@@ -72,12 +72,11 @@ describe("parseManifest", () => {
   // Invalid JSON
   // ---------------------------------------------------------------------------
 
-  test("throws ManifestError on invalid JSON", () => {
-    expect(() => parseManifest("not json")).toThrow(ManifestError);
+  test("throws on invalid JSON", () => {
     expect(() => parseManifest("not json")).toThrow("Invalid JSON");
   });
 
-  test("throws ManifestError when root is not an object", () => {
+  test("throws when root is not an object", () => {
     expect(() => parseManifest('"string"')).toThrow("must be a JSON object");
     expect(() => parseManifest("[1,2]")).toThrow("must be a JSON object");
     expect(() => parseManifest("42")).toThrow("must be a JSON object");

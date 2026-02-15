@@ -11,6 +11,7 @@ import {
 import { runUpdate, getPackageDir, getInstalledVersion } from "../workflows/bun";
 import { parseManifest } from "../workflows/manifest";
 import { errorMessage, getOpencodeDir } from "../workflows/utils";
+import { resyncSkills } from "../workflows/sync";
 import type { WorkflowEntry } from "../workflows/types";
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,7 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
   }
 
   const results: WorkflowUpdateDetail[] = [];
+  let configDirty = false;
 
   for (const target of targets) {
     const packageDir = getPackageDir(opencodeDir, target.entry.package);
@@ -88,6 +90,15 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
     try {
       newVersion = await getInstalledVersion(packageDir);
     } catch (err) {
+      // Single-target update: failing to verify is an error — the user
+      // explicitly asked to update this workflow and deserves a clear failure.
+      // Bulk update: warn and fall back to cached data so one broken
+      // workflow doesn't block reporting on the rest.
+      if (name) {
+        throw new Error(
+          `Failed to verify update for "${target.name}": could not read version — ${errorMessage(err)}`,
+        );
+      }
       warnings.push(
         `Could not read version after update: ${errorMessage(err)}. Using cached version.`,
       );
@@ -102,6 +113,11 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
       );
       newManifest = parseManifest(manifestContent);
     } catch (err) {
+      if (name) {
+        throw new Error(
+          `Failed to verify update for "${target.name}": could not read workflow.json — ${errorMessage(err)}`,
+        );
+      }
       warnings.push(
         `Could not read workflow.json after update: ${errorMessage(err)}. Using cached manifest data.`,
       );
@@ -113,16 +129,31 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
       };
     }
 
+    // Resync skill directories after update
+    const syncResult = await resyncSkills(
+      opencodeDir,
+      packageDir,
+      newManifest.skills,
+      target.entry.skills,
+      target.entry.sync?.skills,
+    );
+    warnings.push(...syncResult.warnings);
+
     const versionChanged = newVersion !== target.entry.version;
     const manifestChanged =
       !arraysEqual(newManifest.agents, target.entry.agents) ||
       !arraysEqual(newManifest.commands, target.entry.commands) ||
       !arraysEqual(newManifest.skills, target.entry.skills) ||
       !arraysEqual(newManifest.mcps, target.entry.mcps);
+    const syncChanged = !syncStatesEqual(
+      syncResult.entries,
+      target.entry.sync?.skills,
+    );
 
     const updated = versionChanged || manifestChanged;
 
-    if (updated) {
+    if (updated || syncChanged) {
+      configDirty = true;
       setWorkflow(config, target.name, {
         package: target.entry.package,
         version: newVersion,
@@ -130,6 +161,9 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
         commands: newManifest.commands,
         skills: newManifest.skills,
         mcps: newManifest.mcps,
+        ...(Object.keys(syncResult.entries).length > 0 && {
+          sync: { skills: syncResult.entries },
+        }),
       });
     }
 
@@ -152,7 +186,7 @@ export async function update(options: UpdateOptions): Promise<UpdateResult> {
     });
   }
 
-  if (results.some((r) => r.updated)) {
+  if (results.some((r) => r.updated) || configDirty) {
     await writeConfig(projectDir, config);
   }
 
@@ -174,4 +208,17 @@ function arraysEqual(a: string[], b: string[]): boolean {
 function diff(a: string[], b: string[]): string[] {
   const bSet = new Set(b);
   return a.filter((item) => !bSet.has(item));
+}
+
+/** Compare two sync states for equality (both keys and statuses). */
+function syncStatesEqual(
+  a: Record<string, { status: string }>,
+  b: Record<string, { status: string }> | undefined,
+): boolean {
+  const aKeys = Object.keys(a).sort();
+  const bKeys = b ? Object.keys(b).sort() : [];
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every(
+    (key, i) => key === bKeys[i] && a[key].status === b![key].status,
+  );
 }

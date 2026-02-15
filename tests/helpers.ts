@@ -48,13 +48,6 @@ export async function fileExists(path: string): Promise<boolean> {
 }
 
 /**
- * Read file content as a string.
- */
-export async function readFileContent(path: string): Promise<string> {
-  return readFile(path, "utf-8");
-}
-
-/**
  * Get the absolute path to a fixture package.
  */
 export function fixtureDir(name: string): string {
@@ -137,10 +130,3 @@ export async function runCLI(
   }
 }
 
-/**
- * Get file permissions mode (for testing executable preservation).
- */
-export async function getFileMode(path: string): Promise<number> {
-  const s = await stat(path);
-  return s.mode;
-}

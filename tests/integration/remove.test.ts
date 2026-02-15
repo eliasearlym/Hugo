@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createTempDir, fixtureDir, readConfig, fileExists } from "../helpers";
 import { install } from "../../src/commands/install";
 import { remove } from "../../src/commands/remove";
@@ -93,6 +94,54 @@ describe("remove", () => {
 
     // Package should be removed (or at least not in dependencies)
     // Note: bun may leave files but removes from package.json
+  });
+
+  // -----------------------------------------------------------------------
+  // Skill syncing
+  // -----------------------------------------------------------------------
+
+  test("removes synced skill directories on remove", async () => {
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("basic-workflow")}`,
+    });
+
+    // Skill should exist after install
+    const skillDir = join(projectDir, ".opencode", "skills", "analysis");
+    expect(await fileExists(skillDir)).toBe(true);
+
+    const result = await remove({ projectDir, name: "basic-workflow" });
+
+    // Skill directory should be removed
+    expect(await fileExists(skillDir)).toBe(false);
+    expect(result.syncWarnings).toEqual([]);
+  });
+
+  test("does not remove skipped skill directories on remove", async () => {
+    // Pre-create the skill directory with user content
+    const skillDir = join(projectDir, ".opencode", "skills", "analysis");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "# User's analysis");
+
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("basic-workflow")}`,
+    });
+
+    await remove({ projectDir, name: "basic-workflow" });
+
+    // User's skill directory should still exist
+    expect(await fileExists(skillDir)).toBe(true);
+  });
+
+  test("handles remove of workflow with no sync state gracefully", async () => {
+    await install({
+      projectDir,
+      spec: `file:${fixtureDir("agents-only")}`,
+    });
+
+    const result = await remove({ projectDir, name: "agents-only" });
+    expect(result.syncWarnings).toEqual([]);
   });
 
   test("preserves other workflows when removing one", async () => {

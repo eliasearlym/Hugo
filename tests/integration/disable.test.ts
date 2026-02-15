@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
-import { createTempDir, fixtureDir } from "../helpers";
+import { createTempDir, fixtureDir, fileExists } from "../helpers";
 import { install } from "../../src/commands/install";
 import { disable } from "../../src/commands/disable";
 import {
@@ -145,6 +145,66 @@ describe("disable", () => {
     await expect(disable({ projectDir, names: [] })).rejects.toThrow(
       "No workflow names specified.",
     );
+  });
+
+  // -----------------------------------------------------------------------
+  // Skill syncing
+  // -----------------------------------------------------------------------
+
+  test("removes synced skill directories on disable", async () => {
+    await install({ projectDir, spec: `file:${fixtureDir("basic-workflow")}` });
+
+    const skillDir = join(projectDir, ".opencode", "skills", "analysis");
+    expect(await fileExists(skillDir)).toBe(true);
+
+    const result = await disable({ projectDir, names: ["basic-workflow"] });
+
+    expect(await fileExists(skillDir)).toBe(false);
+    expect(result.workflows[0].syncWarnings).toEqual([]);
+  });
+
+  test("clears sync state from entry on disable", async () => {
+    await install({ projectDir, spec: `file:${fixtureDir("basic-workflow")}` });
+
+    // Before disable, sync state exists
+    let config = await readConfig(projectDir);
+    let entry = getWorkflow(config, "basic-workflow");
+    expect(entry?.sync).toBeDefined();
+
+    await disable({ projectDir, names: ["basic-workflow"] });
+
+    // After disable, sync state should be cleared
+    config = await readConfig(projectDir);
+    entry = getWorkflow(config, "basic-workflow");
+    expect(entry?.sync).toBeUndefined();
+  });
+
+  test("does not remove skipped skill directories on disable", async () => {
+    // Pre-create a user skill directory before install
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const skillDir = join(projectDir, ".opencode", "skills", "analysis");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "# User's version");
+
+    await install({ projectDir, spec: `file:${fixtureDir("basic-workflow")}` });
+
+    // Sync state should show "skipped"
+    let config = await readConfig(projectDir);
+    let entry = getWorkflow(config, "basic-workflow");
+    expect(entry?.sync?.skills?.analysis?.status).toBe("skipped");
+
+    await disable({ projectDir, names: ["basic-workflow"] });
+
+    // User's directory should still exist
+    expect(await fileExists(skillDir)).toBe(true);
+  });
+
+  test("handles disable of workflow with no skills", async () => {
+    await install({ projectDir, spec: `file:${fixtureDir("agents-only")}` });
+
+    const result = await disable({ projectDir, names: ["agents-only"] });
+
+    expect(result.workflows[0].syncWarnings).toEqual([]);
   });
 
   // -----------------------------------------------------------------------

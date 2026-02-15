@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
-import { writeFile, rm } from "node:fs/promises";
-import { createTempDir, stageFixture, swapFixtureVersion } from "../helpers";
+import { writeFile, rm, readFile } from "node:fs/promises";
+import { createTempDir, stageFixture, swapFixtureVersion, fileExists } from "../helpers";
 import { install } from "../../src/commands/install";
 import { update } from "../../src/commands/update";
 
@@ -33,7 +33,7 @@ describe("update", () => {
     }
   });
 
-  test("warnings field populated when workflow.json is corrupt after update", async () => {
+  test("single-target update throws when workflow.json is corrupt after update", async () => {
     const staged = await stageFixture("basic-workflow");
     try {
       await install({ projectDir, spec: staged.spec });
@@ -43,19 +43,15 @@ describe("update", () => {
       // in node_modules will see the corrupt file on next read.
       await writeFile(join(staged.dir, "workflow.json"), "{{corrupt json");
 
-      const result = await update({ projectDir, name: "basic-workflow" });
-
-      expect(result.workflows).toHaveLength(1);
-      expect(result.workflows[0].warnings.length).toBeGreaterThan(0);
-      expect(result.workflows[0].warnings[0]).toContain(
-        "Could not read workflow.json after update",
-      );
+      await expect(
+        update({ projectDir, name: "basic-workflow" }),
+      ).rejects.toThrow("could not read workflow.json");
     } finally {
       await staged.cleanup();
     }
   });
 
-  test("warnings field populated when workflow.json is missing after update", async () => {
+  test("single-target update throws when workflow.json is missing after update", async () => {
     const staged = await stageFixture("basic-workflow");
     try {
       await install({ projectDir, spec: staged.spec });
@@ -63,14 +59,30 @@ describe("update", () => {
       // Remove the workflow.json from the staged source
       await rm(join(staged.dir, "workflow.json"));
 
-      const result = await update({ projectDir, name: "basic-workflow" });
+      await expect(
+        update({ projectDir, name: "basic-workflow" }),
+      ).rejects.toThrow("could not read workflow.json");
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  test("bulk update warns instead of throwing when workflow.json is corrupt", async () => {
+    const staged = await stageFixture("basic-workflow");
+    try {
+      await install({ projectDir, spec: staged.spec });
+
+      await writeFile(join(staged.dir, "workflow.json"), "{{corrupt json");
+
+      // Bulk update (no name) should warn and fall back to cached data
+      const result = await update({ projectDir });
 
       expect(result.workflows).toHaveLength(1);
       expect(result.workflows[0].warnings.length).toBeGreaterThan(0);
       expect(result.workflows[0].warnings[0]).toContain(
         "Could not read workflow.json after update",
       );
-      // Should fall back to cached data — no structural changes detected
+      // Falls back to cached data — no structural changes detected
       expect(result.workflows[0].addedAgents).toEqual([]);
       expect(result.workflows[0].removedAgents).toEqual([]);
     } finally {
@@ -107,6 +119,68 @@ describe("update", () => {
       expect(w.addedMcps).toEqual([]);
       expect(w.removedMcps).toEqual([]);
       expect(w.warnings).toEqual([]);
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Skill syncing on update
+  // -----------------------------------------------------------------------
+
+  test("resyncs skill files on version bump", async () => {
+    // Install v1: has skills/analysis/ with "Running analysis..."
+    const staged = await stageFixture("basic-workflow");
+    try {
+      await install({ projectDir, spec: staged.spec });
+
+      const skillFile = join(
+        projectDir,
+        ".opencode",
+        "skills",
+        "analysis",
+        "scripts",
+        "run.sh",
+      );
+      const v1Content = await readFile(skillFile, "utf-8");
+      expect(v1Content).toContain("Running analysis...");
+
+      // Swap to v2: has skills/analysis/ with "Running analysis v2..."
+      await swapFixtureVersion(staged.dir, "basic-workflow-v2");
+
+      await update({ projectDir, name: "basic-workflow" });
+
+      // Skill file should now have v2 content
+      const v2Content = await readFile(skillFile, "utf-8");
+      expect(v2Content).toContain("Running analysis v2...");
+    } finally {
+      await staged.cleanup();
+    }
+  });
+
+  test("copies new subdirectories added in updated skill", async () => {
+    // v1 has skills/analysis/scripts/run.sh
+    // v2 adds skills/analysis/helpers/format.sh
+    const staged = await stageFixture("basic-workflow");
+    try {
+      await install({ projectDir, spec: staged.spec });
+
+      const helpersDir = join(
+        projectDir,
+        ".opencode",
+        "skills",
+        "analysis",
+        "helpers",
+      );
+      expect(await fileExists(helpersDir)).toBe(false);
+
+      await swapFixtureVersion(staged.dir, "basic-workflow-v2");
+      await update({ projectDir, name: "basic-workflow" });
+
+      expect(await fileExists(helpersDir)).toBe(true);
+      expect(
+        await fileExists(join(helpersDir, "format.sh")),
+      ).toBe(true);
     } finally {
       await staged.cleanup();
     }

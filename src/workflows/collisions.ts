@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { getWorkflows, hasPlugin } from "./config";
 import { fileExists, getOpencodeDir } from "./utils";
-import type { CollisionWarning, CrossCheckScope } from "./types";
+import type { CollisionWarning, CrossCheckScope, SkillSyncState } from "./types";
 
 // ---------------------------------------------------------------------------
 // Collision detection
@@ -27,6 +27,7 @@ export async function detectCollisions(
   config: Record<string, unknown>,
   projectDir: string,
   scope: CrossCheckScope = "enabled-only",
+  syncState?: SkillSyncState,
 ): Promise<CollisionWarning[]> {
   const warnings: CollisionWarning[] = [];
   const workflows = getWorkflows(config);
@@ -45,7 +46,7 @@ export async function detectCollisions(
 
   await checkFileOverrides(warnings, manifest.agents, "agent", opencodeDir, "agents");
   await checkFileOverrides(warnings, manifest.commands, "command", opencodeDir, "commands");
-  await checkSkillFileOverrides(warnings, manifest.skills, opencodeDir);
+  await checkSkillFileOverrides(warnings, manifest.skills, opencodeDir, syncState);
 
   checkUserConfigOverrides(warnings, manifest.agents, "agent", config);
   checkUserConfigOverrides(warnings, manifest.commands, "command", config);
@@ -121,6 +122,7 @@ async function checkSkillFileOverrides(
   warnings: CollisionWarning[],
   names: string[],
   opencodeDir: string,
+  syncState?: SkillSyncState,
 ): Promise<void> {
   if (names.length === 0) return;
 
@@ -133,6 +135,9 @@ async function checkSkillFileOverrides(
 
   for (const { name, exists } of results) {
     if (exists) {
+      // If Hugo synced this skill, it's not a user override — skip the warning.
+      if (syncState?.[name]?.status === "synced") continue;
+
       warnings.push({
         type: "overridden-by-file",
         entity: "skill",
@@ -173,5 +178,3 @@ function checkUserConfigOverrides(
     }
   }
 }
-
-

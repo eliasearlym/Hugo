@@ -7,6 +7,7 @@ import {
 } from "../workflows/config";
 import { getOpencodeDir } from "../workflows/utils";
 import { removeDependency } from "../workflows/bun";
+import { unsyncSkills } from "../workflows/sync";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,6 +26,7 @@ export type RemoveResult = {
   skills: string[];
   mcps: string[];
   bunWarning?: string;
+  syncWarnings: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -42,6 +44,9 @@ export async function remove(options: RemoveOptions): Promise<RemoveResult> {
     throw new Error(`Workflow "${name}" is not installed.`);
   }
 
+  // Unsync skill directories before removing the workflow entry (which holds the sync state)
+  const unsyncResult = await unsyncSkills(opencodeDir, entry.skills, entry.sync?.skills);
+
   removePlugin(config, entry.package);
   removeWorkflow(config, name);
   await writeConfig(projectDir, config);
@@ -57,5 +62,6 @@ export async function remove(options: RemoveOptions): Promise<RemoveResult> {
     skills: entry.skills,
     mcps: entry.mcps,
     bunWarning: warning,
+    syncWarnings: unsyncResult.warnings,
   };
 }

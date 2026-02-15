@@ -172,7 +172,15 @@ async function detectMcps(
 
   // 2. Dynamic import (bun handles TypeScript natively)
   //    Cache-bust to prevent stale modules when build is run multiple times
-  //    in the same process (e.g. in tests).
+  //    in the same process (e.g. in tests). In CLI usage each `hugo build`
+  //    is its own process, so the cache-bust is harmless.
+  //
+  //    Side-effect note: each cache-busted import re-executes the module's
+  //    top-level code. The deep proxy mock prevents SDK calls, but plugins
+  //    with global side effects (signal handlers, globals mutation) would
+  //    accumulate across repeated builds in the same process. This is
+  //    acceptable — plugin entry points should be side-effect-free at the
+  //    module level, and all current usage (CLI + tests) works correctly.
   const mod = await import(entryPath + "?t=" + Date.now());
 
   // 3. Find the exported Plugin
@@ -432,25 +440,18 @@ async function scanSkillDirs(
     return [];
   }
 
-  const entryChecks = await Promise.all(
+  const results = await Promise.all(
     entries.map(async (entry) => {
       const entryPath = join(dir, entry);
       try {
         const entryStat = await stat(entryPath);
-        return { entry, isDir: entryStat.isDirectory() };
+        if (!entryStat.isDirectory()) return null;
       } catch {
-        return { entry, isDir: false };
+        return null;
       }
-    }),
-  );
 
-  const dirs = entryChecks.filter((e) => e.isDir);
-
-  const skillChecks = await Promise.all(
-    dirs.map(async ({ entry }) => {
-      const skillMdPath = join(dir, entry, "SKILL.md");
       try {
-        await stat(skillMdPath);
+        await stat(join(dir, entry, "SKILL.md"));
         return { entry, hasSkillMd: true };
       } catch {
         return { entry, hasSkillMd: false };
@@ -459,11 +460,12 @@ async function scanSkillDirs(
   );
 
   const names: string[] = [];
-  for (const { entry, hasSkillMd } of skillChecks) {
-    if (hasSkillMd) {
-      names.push(entry);
+  for (const result of results) {
+    if (!result) continue;
+    if (result.hasSkillMd) {
+      names.push(result.entry);
     } else {
-      warnings.push(`skills/${entry}/ is missing SKILL.md — skipped.`);
+      warnings.push(`skills/${result.entry}/ is missing SKILL.md — skipped.`);
     }
   }
 

@@ -128,6 +128,64 @@ describe("readConfig → writeConfig roundtrip", () => {
     const read = await readConfig(dir);
     expect(read).toEqual(original);
   });
+
+  test("preserves JSONC comments through read/modify/write cycle", async () => {
+    const jsonc = `{
+  "$schema": "https://opencode.ai/config.json",
+  // User's theme preference
+  "theme": "dark",
+  /* MCP servers configured by the team */
+  "mcp": {
+    "jira": { "type": "remote", "url": "https://jira.example.com" }
+  },
+  "plugin": ["@org/old-workflow"]
+}`;
+    await writeFile(join(dir, "opencode.json"), jsonc);
+
+    // Read, modify Hugo-managed keys, write back
+    const config = await readConfig(dir);
+    config.plugin = ["@org/new-workflow"];
+    config.hugo = { workflows: { "new-workflow": sampleEntry } };
+    await writeConfig(dir, config);
+
+    // Verify comments survived
+    const raw = await readFile(join(dir, "opencode.json"), "utf-8");
+    expect(raw).toContain("// User's theme preference");
+    expect(raw).toContain("/* MCP servers configured by the team */");
+
+    // Verify data is correct
+    const reread = await readConfig(dir);
+    expect(reread.theme).toBe("dark");
+    expect(reread.plugin).toEqual(["@org/new-workflow"]);
+    expect(getWorkflow(reread, "new-workflow")).toEqual(sampleEntry);
+  });
+
+  test("preserves comments when removing keys", async () => {
+    const jsonc = `{
+  // Schema for autocomplete
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@org/workflow"],
+  "hugo": {
+    "workflows": {
+      "workflow": ${JSON.stringify(sampleEntry, null, 2).split("\n").join("\n      ")}
+    }
+  }
+}`;
+    await writeFile(join(dir, "opencode.json"), jsonc);
+
+    const config = await readConfig(dir);
+    config.plugin = [];
+    delete config.hugo;
+    await writeConfig(dir, config);
+
+    const raw = await readFile(join(dir, "opencode.json"), "utf-8");
+    expect(raw).toContain("// Schema for autocomplete");
+
+    const reread = await readConfig(dir);
+    expect(reread.$schema).toBe("https://opencode.ai/config.json");
+    expect(reread.plugin).toEqual([]);
+    expect(reread.hugo).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

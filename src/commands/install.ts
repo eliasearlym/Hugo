@@ -4,8 +4,10 @@ import {
   readConfig,
   writeConfig,
   addPlugin,
+  removePlugin,
   getWorkflow,
   setWorkflow,
+  removeWorkflow,
 } from "../workflows/config";
 import {
   installPackage,
@@ -17,6 +19,7 @@ import {
 import { parseManifest } from "../workflows/manifest";
 import { deriveWorkflowName, errorMessage, getOpencodeDir } from "../workflows/utils";
 import { detectCollisions } from "../workflows/collisions";
+import { syncSkills, unsyncSkills } from "../workflows/sync";
 import type { CollisionWarning, WorkflowEntry } from "../workflows/types";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +41,7 @@ export type InstallResult = {
   skills: string[];
   mcps: string[];
   warnings: CollisionWarning[];
+  syncWarnings: string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -136,8 +140,6 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     throw err;
   }
 
-  // TypeScript can't see that one of the two branches above always assigns
-  // config, so we assert it here.
   const finalConfig = config!;
 
   const warnings = await detectCollisions(
@@ -147,6 +149,8 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     projectDir,
   );
 
+  const syncResult = await syncSkills(opencodeDir, packageDir, manifest.skills);
+
   addPlugin(finalConfig, packageName);
   const entry: WorkflowEntry = {
     package: packageName,
@@ -155,12 +159,20 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     commands: manifest.commands,
     skills: manifest.skills,
     mcps: manifest.mcps,
+    ...(Object.keys(syncResult.entries).length > 0 && {
+      sync: { skills: syncResult.entries },
+    }),
   };
   setWorkflow(finalConfig, workflowName, entry);
 
   try {
     await writeConfig(projectDir, finalConfig);
   } catch (err) {
+    // Rollback: undo in-memory mutations so the config object isn't left
+    // in a half-applied state if the caller holds a reference to it.
+    removeWorkflow(finalConfig, workflowName);
+    removePlugin(finalConfig, packageName);
+    await unsyncSkills(opencodeDir, manifest.skills, syncResult.entries);
     await removeDependency(opencodeDir, packageName);
     throw err;
   }
@@ -174,5 +186,6 @@ export async function install(options: InstallOptions): Promise<InstallResult> {
     skills: manifest.skills,
     mcps: manifest.mcps,
     warnings,
+    syncWarnings: syncResult.warnings,
   };
 }
